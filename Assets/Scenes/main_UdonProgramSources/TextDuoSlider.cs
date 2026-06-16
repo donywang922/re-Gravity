@@ -1,0 +1,110 @@
+using System;
+using TMPro;
+using UdonSharp;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace Scenes.main_UdonProgramSources
+{
+    public class TextDuoSlider : UdonSharpBehaviour
+    {
+        public Slider sliderA; // 在面板里拖入你的 Slider 组件
+        public TextMeshProUGUI textA;
+        public Slider sliderB; // 在面板里拖入你的 Slider 组件
+        public TextMeshProUGUI textB;
+        public float step = 0.1f;
+
+        [UnityEngine.Tooltip("是否允许 Slider A 的值超过 Slider B 的值")]
+        public bool allowAExceedB = true;
+
+        [Header("Slider A Format")]
+        [UnityEngine.Tooltip("0: 整数, 1: 一位小数, 2: 两位小数")]
+        [Range(0, 2)]
+        public int decimalPlacesA = 1;
+        public bool useSpecialValueA = false;
+        public float specialValueA = 0f;
+        public string specialValueTextA = "";
+
+        [Header("Slider B Format")]
+        [UnityEngine.Tooltip("0: 整数, 1: 一位小数, 2: 两位小数")]
+        [Range(0, 2)]
+        public int decimalPlacesB = 1;
+        public bool useSpecialValueB = false;
+        public float specialValueB = 0f;
+        public string specialValueTextB = "";
+
+        public void _OnSliderAChanged()
+        {
+            if (!allowAExceedB && sliderA != null && sliderB != null &&
+                sliderA.value > (sliderB.maxValue - sliderB.value))
+            {
+                sliderA.value = sliderB.maxValue - sliderB.value;
+            }
+
+            float currentValue = sliderA.value;
+            string displayText = "";
+            if (useSpecialValueA && Mathf.Abs(currentValue - specialValueA) < 0.001f && !string.IsNullOrEmpty(specialValueTextA))
+            {
+                displayText = specialValueTextA;
+            }
+            else
+            {
+                switch (decimalPlacesA)
+                {
+                    case 0: displayText = currentValue.ToString("F0"); break;
+                    case 1: displayText = currentValue.ToString("F1"); break;
+                    case 2: displayText = currentValue.ToString("F2"); break;
+                    default: displayText = currentValue.ToString("F1"); break;
+                }
+            }
+            textA.text = $"←{displayText}";
+        }
+
+        public void _OnSliderBChanged()
+        {
+            if (!allowAExceedB && sliderA != null && sliderB != null &&
+                (sliderB.maxValue - sliderB.value) < sliderA.value)
+            {
+                sliderB.value = sliderB.maxValue - sliderA.value;
+            }
+
+            float currentValue = sliderB.maxValue - sliderB.value;
+            string displayText = "";
+            if (useSpecialValueB && Mathf.Abs(currentValue - specialValueB) < 0.001f && !string.IsNullOrEmpty(specialValueTextB))
+            {
+                displayText = specialValueTextB;
+            }
+            else
+            {
+                switch (decimalPlacesB)
+                {
+                    case 0: displayText = currentValue.ToString("F0"); break;
+                    case 1: displayText = currentValue.ToString("F1"); break;
+                    case 2: displayText = currentValue.ToString("F2"); break;
+                    default: displayText = currentValue.ToString("F1"); break;
+                }
+            }
+            textB.text = $"{displayText}→";
+        }
+
+        public void _OnButtonAP()
+        {
+            sliderA.value += step;
+        }
+
+        public void _OnButtonAN()
+        {
+            sliderA.value -= step;
+        }
+
+        public void _OnButtonBP()
+        {
+            sliderB.value -= step;
+        }
+
+        public void _OnButtonBN()
+        {
+            sliderB.value += step;
+        }
+    }
+}
