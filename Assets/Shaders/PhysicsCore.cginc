@@ -241,12 +241,18 @@ inline float3 ComputeSpawnPosition(uint seed, float spawnRadius) {
 // seed 偏移: +5u (速度噪声), +6u/+7u/+8u (方向噪声)
 // ---------------------------------------------------------------------------
 inline float3 ComputeOrbitalVelocity(uint seed, float3 pos, float spawnRadius, float G) {
-    float dist = length(float2(pos.x, pos.z));
-    float3 radialDir = float3(pos.x, 0, pos.z);
+    // 偏转后的全局自转轴，偏离纯 Y 轴以获得更好看的初始形态
+    float3 axis = normalize(float3(0.25, 1.0, 0.3)); 
+    
+    // 计算天体位置到旋转轴的投影和垂直向量
+    float dotPosAxis = dot(pos, axis);
+    float3 posPerp = pos - dotPosAxis * axis;
+    float dist = length(posPerp);
+    
     float3 tangent = float3(0, 0, 0);
     if (dist > 0.001) {
-        radialDir = normalize(radialDir);
-        tangent = float3(-radialDir.z, 0, radialDir.x); // 绕 Y 轴顺时针
+        float3 radialDir = posPerp / dist;
+        tangent = cross(radialDir, axis); // 绕全局倾斜轴顺时针旋转
     }
 
     float estimatedTotalMass = 24000.0;

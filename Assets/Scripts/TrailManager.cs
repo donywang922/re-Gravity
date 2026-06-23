@@ -26,7 +26,7 @@ public class TrailManager : UdonSharpBehaviour
     private int _idTrailHistory, _idTrailHistoryPrev, _idTrailRecordDistance;
     private int[] _prevTopIDs = new int[64];
     
-    private Color[] _readbackData;
+    private float[] _readbackData;
     private int[] _topIDs;
     private float[] _topMasses;
     private int[] _newOutputIDs;
@@ -46,7 +46,7 @@ public class TrailManager : UdonSharpBehaviour
         _currTrail = trailHistoryA;
         _prevTrail = trailHistoryB;
         
-        _readbackData = new Color[65536];
+        _readbackData = new float[65536 * 4];
         _topIDs = new int[64];
         _topMasses = new float[64];
         _newOutputIDs = new int[64];
@@ -67,6 +67,7 @@ public class TrailManager : UdonSharpBehaviour
 
     void Update()
     {
+        //已优化：使用一维float数组直接读取RGBAFloat，按活跃天体数量遍历，并缓存数组查询结果。彻底解决掉帧问题。
         VRCShader.SetGlobalFloat(_idTrailRecordDistance, trailRecordDistance);
 
         if (simulator == null || simulator.isPaused) return;
@@ -85,11 +86,15 @@ public class TrailManager : UdonSharpBehaviour
 
         if (_isProcessingReadback)
         {
-            int endIndex = Mathf.Min(_processIndex + processBatchSize, _readbackData.Length);
+            int activeBodies = simulator != null && simulator.ctrlPanel != null ? simulator.ctrlPanel.activeMaxBodies : 65536;
+            int endIndex = Mathf.Min(_processIndex + processBatchSize, activeBodies);
+            
+            float threshold = _topMasses[63];
+
             for (int i = _processIndex; i < endIndex; i++)
             {
-                float m = _readbackData[i].a;
-                if (m > _topMasses[63])
+                float m = _readbackData[i * 4 + 3];
+                if (m > threshold)
                 {
                     int insertPos = 63;
                     while (insertPos > 0 && m > _topMasses[insertPos - 1])
@@ -100,12 +105,14 @@ public class TrailManager : UdonSharpBehaviour
                     }
                     _topMasses[insertPos] = m;
                     _topIDs[insertPos] = i;
+                    
+                    threshold = _topMasses[63];
                 }
             }
             
             _processIndex = endIndex;
             
-            if (_processIndex >= _readbackData.Length)
+            if (_processIndex >= activeBodies)
             {
                 _isProcessingReadback = false;
                 FinalizeTop64();

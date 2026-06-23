@@ -18,7 +18,7 @@ Shader "re-Gravity/CRT_InitVelMisc"
 
             #include "UnityCustomRenderTexture.cginc"
             #include "PhysicsCore.cginc"
-
+            
             float4 frag(v2f_init_customrendertexture IN) : SV_Target
             {
                 // return float4(0, 0, 0, 0);
@@ -36,7 +36,7 @@ Shader "re-Gravity/CRT_InitVelMisc"
                 );
 
                 float3 vel = ComputeOrbitalVelocity(seed, spawnPos, _Udon_SpawnRadius,
-                    _Udon_GravitationalConstant);
+                                                                _Udon_GravitationalConstant);
 
                 return float4(vel, 0.0); // 事件信号初始化为 0
             }

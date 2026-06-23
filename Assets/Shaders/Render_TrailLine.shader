@@ -84,8 +84,16 @@ Shader "re-Gravity/Render_TrailLine"
                 float3 right = cross(dir, viewDir);
 
                 // 宽度改为恒定
-                float width = TRAIL_BASE_WIDTH;
-                worldPos += right * v.uv.y * width;
+                // 保证至少在屏幕上有 1 像素宽度，但不能超过天体本身的粗细
+                float4 clipCenter = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
+                float halfPixelWidth = clipCenter.w / (_ScreenParams.y * abs(UNITY_MATRIX_P._m11));
+                
+                float bodyRadius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio);
+                
+                float halfWidth = max((float)TRAIL_BASE_WIDTH, halfPixelWidth);
+                halfWidth = min(halfWidth, bodyRadius);
+                
+                worldPos += right * v.uv.y * halfWidth;
 
                 o.pos = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
 

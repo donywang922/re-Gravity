@@ -13,19 +13,30 @@ namespace Scenes.main_UdonProgramSources
         public float step = 0.1f;
         public float displayMultiplier = 1.0f;
 
-        [UnityEngine.Tooltip("0: 整数, 1: 一位小数, 2: 两位小数")]
-        [Range(0, 2)]
+        [UnityEngine.Tooltip("0: 整数, 1: 一位小数, 2: 两位小数")] [Range(0, 2)]
         public int decimalPlaces = 1;
+
         public bool useSpecialValue = false;
         public float specialValue = 0f;
+
         public string specialValueText = "";
+
+        public UdonSharpBehaviour callbackTarget;
+        public string callbackEvent;
+
+        public void SetValueAndRefresh(float val)
+        {
+            slider.SetValueWithoutNotify(val);
+            _OnSliderChanged();
+        }
 
         public void _OnSliderChanged()
         {
             float currentValue = slider.value * displayMultiplier;
             string displayText = "";
 
-            if (useSpecialValue && Mathf.Abs(currentValue - specialValue) < 0.001f && !string.IsNullOrEmpty(specialValueText))
+            if (useSpecialValue && Mathf.Abs(currentValue - specialValue) < 0.001f &&
+                !string.IsNullOrEmpty(specialValueText))
             {
                 displayText = specialValueText;
             }
@@ -41,6 +52,11 @@ namespace Scenes.main_UdonProgramSources
             }
 
             text.text = displayText;
+
+            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
+            {
+                callbackTarget.SendCustomEvent(callbackEvent);
+            }
         }
 
         public void _OnButtonP()

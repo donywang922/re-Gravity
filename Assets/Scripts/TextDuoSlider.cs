@@ -32,11 +32,21 @@ namespace Scenes.main_UdonProgramSources
         public bool useSpecialValueB = false;
         public float specialValueB = 0f;
         public string specialValueTextB = "";
+        
+        public UdonSharpBehaviour callbackTarget;
+        public string callbackEvent;
+
+        public void SetValuesAndRefresh(float valA, float valB)
+        {
+            sliderA.SetValueWithoutNotify(valA);
+            sliderB.SetValueWithoutNotify(valB);
+            _OnSliderAChanged();
+            _OnSliderBChanged();
+        }
 
         public void _OnSliderAChanged()
         {
-            if (!allowAExceedB && sliderA != null && sliderB != null &&
-                sliderA.value > (sliderB.maxValue - sliderB.value))
+            if (!allowAExceedB && sliderA.value > (sliderB.maxValue - sliderB.value))
             {
                 sliderA.value = sliderB.maxValue - sliderB.value;
             }
@@ -58,12 +68,15 @@ namespace Scenes.main_UdonProgramSources
                 }
             }
             textA.text = $"←{displayText}";
+            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
+            {
+                callbackTarget.SendCustomEvent(callbackEvent);
+            }
         }
 
         public void _OnSliderBChanged()
         {
-            if (!allowAExceedB && sliderA != null && sliderB != null &&
-                (sliderB.maxValue - sliderB.value) < sliderA.value)
+            if (!allowAExceedB && (sliderB.maxValue - sliderB.value) < sliderA.value)
             {
                 sliderB.value = sliderB.maxValue - sliderA.value;
             }
@@ -85,6 +98,10 @@ namespace Scenes.main_UdonProgramSources
                 }
             }
             textB.text = $"{displayText}→";
+            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
+            {
+                callbackTarget.SendCustomEvent(callbackEvent);
+            }
         }
 
         public void _OnButtonAP()

@@ -2,27 +2,30 @@ using UdonSharp;
 using UnityEngine;
 using UnityEngine.UI;
 using VRC.SDKBase;
+using Scenes.main_UdonProgramSources;
+using TMPro;
 
 public class CtrlPanel : UdonSharpBehaviour
 {
     public GravitySimulator simulator;
+
 
     [Header("Console Configs")] public int defMaxBodies = 64;
     public float defMaxStep = 50f;
     public float defSimSpeed = 1.0f;
     public int defBatchCount = 0;
 
-    [Header("Console")] public Slider maxBodiesSlider;
-    public Slider maxStepSlider;
-    public Slider simSpeedSlider;
-    public Slider batchCountSlider;
+    [Header("Console")] public TextSlider maxBodiesSlider;
+    public TextSlider maxStepSlider;
+    public TextSlider simSpeedSlider;
+    public TextSlider batchCountSlider;
 
     [HideInInspector] public int activeMaxBodies;
     [HideInInspector] public float activeMaxStep;
     [HideInInspector] public float activeSimSpeed;
     [HideInInspector] public int activeBatchCount;
 
-    [Header("Colors Configs")] public float defModelLight = 1.0f;
+    [Header("Colors Configs")] public float defAvatarLight = 1.0f;
     public float defFlash = 1.0f;
     public float defGlow = 1.0f;
     public Vector2 defHslH = new Vector2(0.0f, 1.0f);
@@ -31,15 +34,13 @@ public class CtrlPanel : UdonSharpBehaviour
 
     [Header("Colors")] public CustomRenderTexture colorCRT;
     public float minGlowMass = 10000.0f;
-    public Slider modelLightSlider;
-    public Slider flashSlider;
-    public Slider glowSlider;
-    public Slider hslHFromSlider;
-    public Slider hslHToSlider;
-    public Slider hslSFromSlider;
-    public Slider hslSToSlider;
-    public Slider hslLFromSlider;
-    public Slider hslLToSlider;
+    public TextSlider avatarLightSlider;
+    public Light avatarLight;
+    public TextSlider flashSlider;
+    public TextSlider glowSlider;
+    public TextDuoSlider hslHSlider;
+    public TextDuoSlider hslSSlider;
+    public TextDuoSlider hslLSlider;
 
     [HideInInspector] public Vector2 activeHslH;
     [HideInInspector] public Vector2 activeHslS;
@@ -51,19 +52,20 @@ public class CtrlPanel : UdonSharpBehaviour
     public Vector2 defFragMass = new Vector2(5.0f, 15.0f);
     public Vector2 defInitMass = new Vector2(1000.0f, 10000.0f);
 
-    [Header("Settings")] public Slider gravConstSlider;
-    public Slider destroyRadiusSlider;
-    public Slider spawnRadiusSlider;
-    public Slider fragMassFromSlider;
-    public Slider fragMassToSlider;
-    public Slider initMassFromSlider;
-    public Slider initMassToSlider;
+    [Header("Settings")] public TextSlider gravConstSlider;
+    public TextSlider destroyRadiusSlider;
+    public TextSlider spawnRadiusSlider;
+    public TextDuoSlider fragMassSlider;
+    public TextDuoSlider initMassSlider;
 
     [HideInInspector] public float activeGravConst;
     [HideInInspector] public float activeDestroyRadius;
     [HideInInspector] public float activeSpawnRadius;
     [HideInInspector] public Vector2 activeFragMass;
     [HideInInspector] public Vector2 activeInitMass;
+
+    [Header("Debug")] public Toggle debugToggle;
+    public TextMeshProUGUI debugInfoText;
 
     private int _idFlashBrightness, _idBodyBrightness, _idMinGlowMass;
     private int _idHslH, _idHslS, _idHslL, _idColor;
@@ -93,30 +95,38 @@ public class CtrlPanel : UdonSharpBehaviour
         activeFragMass = defFragMass;
         activeInitMass = defInitMass;
 
-        maxBodiesSlider.value = defMaxBodies;
-        maxStepSlider.value = defMaxStep;
-        simSpeedSlider.value = defSimSpeed;
-        batchCountSlider.value = defBatchCount;
+        flashSlider.callbackTarget = this;
+        flashSlider.callbackEvent = nameof(OnFlashChanged);
+        glowSlider.callbackTarget = this;
+        glowSlider.callbackEvent = nameof(OnGlowChanged);
+        avatarLightSlider.callbackTarget = this;
+        avatarLightSlider.callbackEvent = nameof(OnModelLightChanged);
+        maxStepSlider.callbackTarget = this;
+        maxStepSlider.callbackEvent = nameof(OnMaxStepChanged);
+        simSpeedSlider.callbackTarget = this;
+        simSpeedSlider.callbackEvent = nameof(OnSimSpeedChanged);
+        batchCountSlider.callbackTarget = this;
+        batchCountSlider.callbackEvent = nameof(OnBatchCountChanged);
 
-        modelLightSlider.value = defModelLight;
-        flashSlider.value = defFlash;
-        glowSlider.value = defGlow;
+        maxBodiesSlider.SetValueAndRefresh(defMaxBodies);
+        maxStepSlider.SetValueAndRefresh(defMaxStep);
+        simSpeedSlider.SetValueAndRefresh(defSimSpeed);
+        batchCountSlider.SetValueAndRefresh(defBatchCount);
 
-        hslHFromSlider.value = defHslH.x;
-        hslHToSlider.value = hslHToSlider.maxValue - defHslH.y;
-        hslSFromSlider.value = defHslS.x;
-        hslSToSlider.value = hslSToSlider.maxValue - defHslS.y;
-        hslLFromSlider.value = defHslL.x;
-        hslLToSlider.value = hslLToSlider.maxValue - defHslL.y;
+        avatarLightSlider.SetValueAndRefresh(defAvatarLight);
+        flashSlider.SetValueAndRefresh(defFlash);
+        glowSlider.SetValueAndRefresh(defGlow);
 
-        gravConstSlider.value = defGravConst;
-        destroyRadiusSlider.value = defDestroyRadius;
-        spawnRadiusSlider.value = defSpawnRadius;
+        hslHSlider.SetValuesAndRefresh(defHslH.x, hslHSlider.sliderB.maxValue - defHslH.y);
+        hslSSlider.SetValuesAndRefresh(defHslS.x, hslSSlider.sliderB.maxValue - defHslS.y);
+        hslLSlider.SetValuesAndRefresh(defHslL.x, hslLSlider.sliderB.maxValue - defHslL.y);
 
-        fragMassFromSlider.value = defFragMass.x;
-        fragMassToSlider.value = fragMassToSlider.maxValue - defFragMass.y;
-        initMassFromSlider.value = defInitMass.x;
-        initMassToSlider.value = initMassToSlider.maxValue - defInitMass.y;
+        gravConstSlider.SetValueAndRefresh(defGravConst);
+        destroyRadiusSlider.SetValueAndRefresh(defDestroyRadius);
+        spawnRadiusSlider.SetValueAndRefresh(defSpawnRadius);
+
+        fragMassSlider.SetValuesAndRefresh(defFragMass.x, fragMassSlider.sliderB.maxValue - defFragMass.y);
+        initMassSlider.SetValuesAndRefresh(defInitMass.x, initMassSlider.sliderB.maxValue - defInitMass.y);
 
         VRCShader.SetGlobalFloat(_idFlashBrightness, defFlash);
         VRCShader.SetGlobalFloat(_idBodyBrightness, defGlow);
@@ -127,25 +137,41 @@ public class CtrlPanel : UdonSharpBehaviour
         ApplySettings();
     }
 
+    public void OnMaxStepChanged()
+    {
+        activeMaxStep = maxStepSlider.slider.value;
+    }
+
+    public void OnSimSpeedChanged()
+    {
+        activeSimSpeed = simSpeedSlider.slider.value;
+    }
+
+    public void OnBatchCountChanged()
+    {
+        activeBatchCount = (int)batchCountSlider.slider.value;
+    }
+
     public void OnModelLightChanged()
     {
+        avatarLight.intensity = avatarLightSlider.slider.value;
     }
 
     public void OnFlashChanged()
     {
-        VRCShader.SetGlobalFloat(_idFlashBrightness, flashSlider.value);
+        VRCShader.SetGlobalFloat(_idFlashBrightness, flashSlider.slider.value);
     }
 
     public void OnGlowChanged()
     {
-        VRCShader.SetGlobalFloat(_idBodyBrightness, glowSlider.value);
+        VRCShader.SetGlobalFloat(_idBodyBrightness, glowSlider.slider.value);
     }
 
     public void PushColors()
     {
-        activeHslH = new Vector2(hslHFromSlider.value, hslHToSlider.maxValue - hslHToSlider.value);
-        activeHslS = new Vector2(hslSFromSlider.value, hslSToSlider.maxValue - hslSToSlider.value);
-        activeHslL = new Vector2(hslLFromSlider.value, hslLToSlider.maxValue - hslLToSlider.value);
+        activeHslH = new Vector2(hslHSlider.sliderA.value, hslHSlider.sliderB.maxValue - hslHSlider.sliderB.value);
+        activeHslS = new Vector2(hslSSlider.sliderA.value, hslSSlider.sliderB.maxValue - hslSSlider.sliderB.value);
+        activeHslL = new Vector2(hslLSlider.sliderA.value, hslLSlider.sliderB.maxValue - hslLSlider.sliderB.value);
 
         VRCShader.SetGlobalVector(_idHslH, activeHslH);
         VRCShader.SetGlobalVector(_idHslS, activeHslS);
@@ -156,22 +182,25 @@ public class CtrlPanel : UdonSharpBehaviour
 
     public void ApplySettings()
     {
-        activeMaxBodies = (int)maxBodiesSlider.value * 256;
-        activeMaxStep = maxStepSlider.value;
-        activeSimSpeed = simSpeedSlider.value;
-        activeBatchCount = (int)batchCountSlider.value;
+        activeMaxBodies = (int)maxBodiesSlider.slider.value * 256;
+        activeMaxStep = maxStepSlider.slider.value;
+        activeSimSpeed = simSpeedSlider.slider.value;
+        activeBatchCount = (int)batchCountSlider.slider.value;
 
-        activeGravConst = gravConstSlider.value;
-        activeDestroyRadius = destroyRadiusSlider.value;
-        activeSpawnRadius = spawnRadiusSlider.value;
+        activeGravConst = gravConstSlider.slider.value;
+        activeDestroyRadius = destroyRadiusSlider.slider.value;
+        activeSpawnRadius = spawnRadiusSlider.slider.value;
 
-        activeFragMass = new Vector2(fragMassFromSlider.value, fragMassToSlider.maxValue - fragMassToSlider.value);
-        activeInitMass = new Vector2(initMassFromSlider.value, initMassToSlider.maxValue - initMassToSlider.value);
+        activeFragMass = new Vector2(fragMassSlider.sliderA.value,
+            fragMassSlider.sliderB.maxValue - fragMassSlider.sliderB.value);
+        activeInitMass = new Vector2(initMassSlider.sliderA.value,
+            initMassSlider.sliderB.maxValue - initMassSlider.sliderB.value);
     }
 
     public void OnBtnStart()
     {
         simulator.isPaused = false;
+        debugToggle.isOn = false;
     }
 
     public void OnBtnStop()
@@ -195,5 +224,22 @@ public class CtrlPanel : UdonSharpBehaviour
         simulator.isPaused = true;
         ApplySettings();
         simulator.ResetSimulation();
+    }
+
+    public void OnDebugToggleChanged()
+    {
+        simulator.isDebug = debugToggle.isOn;
+    }
+
+    public void OnBtnStepFrame()
+    {
+        simulator.isPaused = false;
+    }
+
+    void Update()
+    {
+        debugInfoText.text =
+            $"物理步长(ms): {simulator.GetPhysicsStep() * 1000:F2}    \t\t目标CRT: {simulator.GetCurrentCRT()}\n" +
+            $"当前批次: {simulator.GetCurrentBatch()}\t\t\t\t总批次数: {simulator.GetTotalBatches()}\n";
     }
 }

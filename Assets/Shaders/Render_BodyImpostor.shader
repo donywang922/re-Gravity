@@ -46,7 +46,8 @@ Shader "re-Gravity/Render_BodyImpostor"
             {
                 float4 pos : SV_POSITION;
                 float2 uv : TEXCOORD0; // Quad UV，用于球面计算
-                float3 viewPos : TEXCOORD1; // 视空间中心位置
+                float3 viewPos : TEXCOORD1; // 视空间顶点位置
+                float3 viewCenter : TEXCOORD2; // 视空间天体中心位置
                 float radius : TEXCOORD3; // 视觉半径
                 float4 color : COLOR; // 最终颜色（含闪光和发光）
             };
@@ -62,6 +63,7 @@ Shader "re-Gravity/Render_BodyImpostor"
                     o.pos = float4(0, 0, 0, 0);
                     o.uv = v.uv;
                     o.viewPos = float3(0, 0, 0);
+                    o.viewCenter = float3(0, 0, 0);
                     o.radius = 0;
                     o.color = float4(0, 0, 0, 0);
                     return o;
@@ -84,6 +86,7 @@ Shader "re-Gravity/Render_BodyImpostor"
                     o.pos = float4(0, 0, 0, 0);
                     o.uv = v.uv;
                     o.viewPos = float3(0, 0, 0);
+                    o.viewCenter = float3(0, 0, 0);
                     o.radius = 0;
                     o.color = float4(0, 0, 0, 0);
                     return o;
@@ -93,7 +96,14 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float radius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio);
                 float3 viewCenter = mul(UNITY_MATRIX_V, float4(worldPos, 1.0)).xyz;
                 o.radius = radius;
-                float3 viewPos = viewCenter + float3(v.vertex.x * radius * 2.0, v.vertex.y * radius * 2.0, 0.0);
+                o.viewCenter = viewCenter;
+
+                // 使 Quad 朝向相机位置 (Spherical Billboard)，修复 VR 边缘扁平拉伸
+                float3 forward = normalize(viewCenter);
+                float3 right = normalize(cross(forward, float3(0, 1, 0)));
+                float3 up = cross(right, forward);
+
+                float3 viewPos = viewCenter + right * (v.vertex.x * radius * 2.0) + up * (v.vertex.y * radius * 2.0);
                 o.viewPos = viewPos;
                 o.pos = mul(UNITY_MATRIX_P, float4(viewPos, 1.0));
                 o.uv = v.uv;
@@ -149,8 +159,11 @@ Shader "re-Gravity/Render_BodyImpostor"
                 // 球面 Z 高度
                 float z = sqrt(1.0 - r2);
 
-                // 覆写深度缓冲（视空间 Z 负方向）
-                float4 clipPos = mul(UNITY_MATRIX_P, float4(i.viewPos.xy, i.viewPos.z + z * i.radius, 1.0));
+                // 覆写深度缓冲（沿视线方向凸出，修复边缘深度误差）
+                float3 forward = normalize(i.viewCenter);
+                float3 sphereViewPos = i.viewPos - forward * (z * i.radius);
+
+                float4 clipPos = mul(UNITY_MATRIX_P, float4(sphereViewPos, 1.0));
                 o.depth = clipPos.z / clipPos.w;
 
                 // Toon Shading（适配 VRChat 动画风格）

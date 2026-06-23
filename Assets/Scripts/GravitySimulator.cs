@@ -28,9 +28,11 @@ public class GravitySimulator : UdonSharpBehaviour
     public float fadeStartDistance = 250.0f;
 
     [Header("States")] public bool isPaused = false;
+    public bool isDebug = false;
 
     private int _currentPhase = 1;
     private int _currentBatch = 0;
+    private int _cycleCount = 0;
     private int _actualBatchCount = 1;
     private int _slowFrameCount = 0;
     private bool _posMassIsA = true;
@@ -39,6 +41,7 @@ public class GravitySimulator : UdonSharpBehaviour
     private float _timeSinceLastUpdate = 0f;
     private float _previousTickTime = 0.05f;
     private uint _frameCount = 0;
+    private float _averageDeltaTime = 0.02f;
 
     // Recenter States
     private int _recenterState = 0; // 0: Idle, 1: Waiting Pos, 2: Waiting Vel, 3: Apply Offset, 4: Reset Offset
@@ -54,7 +57,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _idSpawnRadius,
         _idFadeStartDistance;
 
-    private int _idDeltaTime, _idSimSpeed, _idMaxStep, _idFrame;
+    private int _idDeltaTime, _idSimSpeed, _idMaxStep, _idFrame, _idCycle;
     private int _idPosMass, _idVelMisc, _idEventData, _idStartId, _idEndId;
     private int _idFragmentSizeRange;
     private int _idInitialBodySizeRange;
@@ -83,6 +86,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _idSimSpeed = VRCShader.PropertyToID("_Udon_SimSpeed");
         _idMaxStep = VRCShader.PropertyToID("_Udon_MaxStep");
         _idFrame = VRCShader.PropertyToID("_Udon_Frame");
+        _idCycle = VRCShader.PropertyToID("_Udon_Cycle");
         _idMinInteractMass = VRCShader.PropertyToID("_Udon_MinInteractMass");
 
         _idStartId = VRCShader.PropertyToID("_Udon_StartID");
@@ -144,6 +148,7 @@ public class GravitySimulator : UdonSharpBehaviour
 
         _currentPhase = 1;
         _currentBatch = 0;
+        _cycleCount = 0;
         _timeSinceLastUpdate = 0;
         _frameCount = 0;
         _recenterState = 0;
@@ -295,16 +300,21 @@ public class GravitySimulator : UdonSharpBehaviour
         float ratio = (float)framesSinceUpdate / (_actualBatchCount + 1);
         VRCShader.SetGlobalFloat(_idInterpolationRatio, Mathf.Clamp01(ratio));
 
+        // 增大平滑系数 (0.2)，让平均帧率能更快响应实际掉帧
+        _averageDeltaTime = Mathf.Lerp(_averageDeltaTime, Time.deltaTime, 0.2f);
+
         int currentBatchCount = ctrlPanel.activeBatchCount;
+        
+        // Use average frame rate (delta time) for auto batch count scaling
         if (currentBatchCount <= 0)
         {
-            if (Time.deltaTime > 1.0f / 80.0f)
+            if (_averageDeltaTime > 1.0f / 50.0f)
             {
                 _slowFrameCount++;
                 if (_slowFrameCount >= 5)
                 {
                     _actualBatchCount = Mathf.Clamp(_actualBatchCount + 1, 1, 256);
-                    _slowFrameCount = 0;
+                    _slowFrameCount = -5;
                 }
             }
             else
@@ -333,6 +343,7 @@ public class GravitySimulator : UdonSharpBehaviour
         VRCShader.SetGlobalFloat(_idSimSpeed, ctrlPanel.activeSimSpeed);
         VRCShader.SetGlobalFloat(_idMaxStep, ctrlPanel.activeMaxStep / 1000.0f);
         VRCShader.SetGlobalFloat(_idFrame, _frameCount);
+        VRCShader.SetGlobalFloat(_idCycle, _cycleCount);
         VRCShader.SetGlobalFloat(_idMinInteractMass, minInteractMass);
 
         if (_currentPhase == 1)
@@ -372,8 +383,19 @@ public class GravitySimulator : UdonSharpBehaviour
 
             _currentPhase = 1;
             _currentBatch = 0;
+            _cycleCount++;
             _previousTickTime = _timeSinceLastUpdate;
             _timeSinceLastUpdate = 0;
         }
+
+        if (isDebug)
+        {
+            isPaused = true;
+        }
     }
+
+    public float GetPhysicsStep() => _previousTickTime;
+    public int GetCurrentBatch() => _currentBatch;
+    public int GetTotalBatches() => _actualBatchCount;
+    public string GetCurrentCRT() => _posMassIsA ? "A->B" : "B->A";
 }
