@@ -19,6 +19,7 @@ Shader "re-Gravity/Render_TrailLine"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 5.0
+            #pragma multi_compile_instancing
 
             #include "UnityCG.cginc"
             #include "PhysicsCore.cginc"
@@ -31,6 +32,7 @@ Shader "re-Gravity/Render_TrailLine"
             #define TRAIL_BASE_WIDTH 1 // 轨迹线最大宽度
             #define TRAIL_BASE_ALPHA 1   // 轨迹线最大不透明度
 
+            uniform float _Udon_FadeStartDistance;
             uniform sampler2D _Udon_TrailHistory;
             uniform sampler2D _Udon_Top64IDs;
 
@@ -40,17 +42,22 @@ Shader "re-Gravity/Render_TrailLine"
                 float4 vertex : POSITION;
                 float2 uv : TEXCOORD0;  // X: 归一化历史深度 [0,1], Y: 侧向偏移 (±1)
                 float2 uv2 : TEXCOORD1; // X: 轨迹索引 (0-63), Y: 点索引 (0-255)
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct v2f
             {
                 float4 pos : SV_POSITION;
                 float4 color : COLOR;
+                UNITY_VERTEX_OUTPUT_STEREO
             };
 
             v2f vert(appdata v)
             {
                 v2f o;
+                UNITY_SETUP_INSTANCE_ID(v);
+                UNITY_INITIALIZE_OUTPUT(v2f, o);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
                 // 从 TrailHistory CRT 采样历史坐标
                 float u = (v.uv2.y + 0.5) / (float)TRAIL_LINE_WIDTH;
@@ -64,6 +71,12 @@ Shader "re-Gravity/Render_TrailLine"
                 float u_next = (min(255.0, v.uv2.y + 1.0) + 0.5) / (float)TRAIL_LINE_WIDTH;
                 float4 nextHistData = tex2Dlod(_Udon_TrailHistory, float4(u_next, v_crt, 0, 0));
                 float3 nextWorldPos = nextHistData.xyz;
+
+                float scale = _Udon_SimScale > 0.00001 ? _Udon_SimScale : 1.0;
+                worldPos *= scale;
+                nextWorldPos *= scale;
+                worldPos.y += 1;
+                nextWorldPos.y += 1;
 
                 // 无效数据（当前/下一个像素为黑色）退化为零点
                 if (dot(histData, histData) < 0.001 || dot(nextHistData, nextHistData) < 0.001) {
@@ -88,9 +101,9 @@ Shader "re-Gravity/Render_TrailLine"
                 float4 clipCenter = mul(UNITY_MATRIX_VP, float4(worldPos, 1.0));
                 float halfPixelWidth = clipCenter.w / (_ScreenParams.y * abs(UNITY_MATRIX_P._m11));
                 
-                float bodyRadius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio);
+                float bodyRadius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio) * scale;
                 
-                float halfWidth = max((float)TRAIL_BASE_WIDTH, halfPixelWidth);
+                float halfWidth = max((float)TRAIL_BASE_WIDTH * scale, halfPixelWidth);
                 halfWidth = min(halfWidth, bodyRadius);
                 
                 worldPos += right * v.uv.y * halfWidth;
@@ -109,6 +122,7 @@ Shader "re-Gravity/Render_TrailLine"
 
             float4 frag(v2f i) : SV_Target
             {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
                 return i.color;
             }
             ENDCG

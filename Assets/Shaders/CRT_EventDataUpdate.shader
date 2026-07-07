@@ -19,6 +19,7 @@ Shader "re-Gravity/CRT_EventDataUpdate"
             #pragma vertex CustomRenderTextureVertexShader
             #pragma fragment frag
             #pragma target 5.0
+            #pragma fragmentoption ARB_precision_hint_nicest
 
             #include "UnityCustomRenderTexture.cginc"
             #include "PhysicsCore.cginc"
@@ -41,8 +42,8 @@ Shader "re-Gravity/CRT_EventDataUpdate"
                 if (my_event == EVENT_SHATTER || my_event == EVENT_TEAR || my_event == EVENT_SWALLOWED) {
                     uint target_id = (uint)my_data;
                     float2 target_uv = GetUVFromID(target_id);
-                    float4 target_vel_misc = tex2D(_Udon_VelMisc, target_uv);
-                    float4 target_pos_mass = tex2D(_Udon_PosMass, target_uv);
+                    float4 target_vel_misc = tex2Dlod(_Udon_VelMisc, float4(target_uv, 0, 0));
+                    float4 target_pos_mass = tex2Dlod(_Udon_PosMass, float4(target_uv, 0, 0));
 
                     int target_event;
                     float target_data;

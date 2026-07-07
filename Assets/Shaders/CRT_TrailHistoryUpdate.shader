@@ -14,6 +14,7 @@ Shader "re-Gravity/CRT_TrailHistoryUpdate"
             #pragma vertex CustomRenderTextureVertexShader
             #pragma fragment frag
             #pragma target 5.0
+            #pragma fragmentoption ARB_precision_hint_nicest
 
             #include "UnityCustomRenderTexture.cginc"
             #include "PhysicsCore.cginc"
@@ -21,6 +22,8 @@ Shader "re-Gravity/CRT_TrailHistoryUpdate"
             uniform sampler2D _Udon_Top64IDs;
             uniform sampler2D _Udon_TrailHistory_Prev;
             uniform float _Udon_TrailRecordDistance;
+            uniform float _Udon_ApplyOffset;
+            uniform float4 _Udon_PosOffset;
 
             float4 frag(v2f_customrendertexture IN) : SV_Target
             {
@@ -50,26 +53,37 @@ Shader "re-Gravity/CRT_TrailHistoryUpdate"
                 float dist = length(curr_pos_mass.xyz - anchor_data.xyz);
 
                 float4 result = float4(0, 0, 0, 0);
+                // needsOffset: 仅当数据来源于上一帧历史（旧坐标系）时才需要偏移校正。
+                // curr_pos_mass 已经由 PosMassUpdate 施加了偏移，不可重复减去。
+                bool needsOffset = false;
 
-                if (dist > _Udon_TrailRecordDistance * 10.0) {
-                    // 间隔超过10倍距离，这行全部设为当前位置
+                if (dist > _Udon_TrailRecordDistance * 50.0) {
+                    // 间隔超过10倍距离，这行全部设为当前位置（已在新坐标系）
                     result = curr_pos_mass;
                 } else if (x == 0) {
-                    // 第一列像素，更新为天体实际位置
+                    // 第一列像素，更新为天体实际位置（已在新坐标系）
                     result = curr_pos_mass;
                 } else if (dist > _Udon_TrailRecordDistance) {
-                    // 间隔超过1倍距离，向右位移一像素
+                    // 间隔超过1倍距离，向右位移一像素（来自旧坐标系）
                     float2 prev_x_uv = float2(((float)x - 0.5) / (float)TRAIL_WIDTH, IN.localTexcoord.y);
                     result = tex2D(_Udon_TrailHistory_Prev, prev_x_uv);
+                    needsOffset = true;
                 } else {
-                    // 未超过间隔，保持原样
+                    // 未超过间隔，保持原样（来自旧坐标系）
                     result = tex2D(_Udon_TrailHistory_Prev, IN.localTexcoord.xy);
+                    needsOffset = true;
                 }
 
                 // 如果像素值为0，则设为其左侧像素，用于自动填充空轨迹
                 if (length(result) < 0.001 && x > 0) {
                     float2 prev_x_uv = float2(((float)x - 0.5) / (float)TRAIL_WIDTH, IN.localTexcoord.y);
                     result = tex2D(_Udon_TrailHistory_Prev, prev_x_uv);
+                    needsOffset = true;
+                }
+
+                // 仅对来自旧坐标系的历史数据施加偏移校正
+                if (_Udon_ApplyOffset > 0.5 && needsOffset && length(result) > 0.001) {
+                    result.xyz -= _Udon_PosOffset.xyz;
                 }
 
                 return result;

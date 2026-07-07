@@ -21,31 +21,27 @@ using VRC.SDKBase;
 public class PanelHandler : UdonSharpBehaviour
 {
     // ── References ──────────────────────────────
-    [Header("References")]
-    public Transform panelRoot;
+    [Header("References")] public Transform panelRoot;
     public Transform handle;
     public VRC_Pickup handlePickup;
     public GameObject canvas;
     public Image panelImage;
 
-    [Header("Sprites")]
-    public Sprite pcSprite;
+    [Header("Sprites")] public Sprite pcSprite;
     public Sprite vrSprite;
 
     // ── Tuning ──────────────────────────────────
-    [Header("Slide")]
-    public float slideLength = 0.3f;
+    [Header("Slide")] public float slideLength = 0.3f;
     public float snapSpeed = 10f;
+
     [Tooltip("Negative value moves handle toward the player (local -Z).")]
     public float handleZOffset = -0.02f;
 
-    [Header("Panel Open Position")]
-    public float panelDistance = 0.7f;
+    [Header("Panel Open Position")] public float panelDistance = 0.7f;
     public float heightOffset = 0.3f;
     public float minPanelHeight = 0.3f;
 
-    [Header("Auto Close")]
-    public float maxDistance = 3f;
+    [Header("Auto Close")] public float maxDistance = 3f;
 
     [Header("Initial Open")]
     [Tooltip("Delay (seconds) before opening the panel after joining, to allow player height sync.")]
@@ -60,8 +56,8 @@ public class PanelHandler : UdonSharpBehaviour
     // Cached slide boundaries
     private float _slideMin;
     private float _slideMax;
-    private float _openThreshold;   // handle must reach here to open  (70%)
-    private float _closeThreshold;  // handle must drop here to close  (30%)
+    private float _openThreshold; // handle must reach here to open  (70%)
+    private float _closeThreshold; // handle must drop here to close  (30%)
 
     /// <summary>Whether the panel UI is currently open.</summary>
     public bool IsOpen => _isOpen;
@@ -69,13 +65,33 @@ public class PanelHandler : UdonSharpBehaviour
     // ════════════════════════════════════════════
     //  Lifecycle
     // ════════════════════════════════════════════
-
     private void Start()
     {
         _slideMin = -slideLength / 2f;
-        _slideMax =  slideLength / 2f;
-        _openThreshold  = _slideMin + slideLength * 0.7f;  // 70% from closed end
-        _closeThreshold = _slideMin + slideLength * 0.3f;  // 30% from closed end
+        _slideMax = slideLength / 2f;
+        _openThreshold = _slideMin + slideLength * 0.7f; // 70% from closed end
+        _closeThreshold = _slideMin + slideLength * 0.3f; // 30% from closed end
+    }
+
+    private float _lastTriggerTime = -100f;
+    private const float DoubleClickThreshold = 0.3f;
+
+    public override void InputUse(bool value, VRC.Udon.Common.UdonInputEventArgs args)
+    {
+        if (!_initialized || !_isInVR) return;
+
+        if (value)
+        {
+            if (Time.time - _lastTriggerTime < DoubleClickThreshold)
+            {
+                SetOpen(!_isOpen);
+                _lastTriggerTime = -100f; // reset to prevent triple-click triggering again immediately
+            }
+            else
+            {
+                _lastTriggerTime = Time.time;
+            }
+        }
     }
 
     private void Update()
@@ -89,7 +105,7 @@ public class PanelHandler : UdonSharpBehaviour
         }
 
         if (_isInVR) UpdateVR();
-        else         UpdateDesktop();
+        else UpdateDesktop();
     }
 
     private void Initialize()
@@ -127,7 +143,7 @@ public class PanelHandler : UdonSharpBehaviour
 
         // 1. Position the handle
         if (isHeld) ConstrainHandle();
-        else        SnapHandle();
+        else SnapHandle();
 
         // 2. Determine open / close
         UpdateOpenState();
@@ -175,8 +191,8 @@ public class PanelHandler : UdonSharpBehaviour
     private void UpdateOpenState()
     {
         float x = handle.localPosition.x;
-        if (!_isOpen && x > _openThreshold)  SetOpen(true);
-        if ( _isOpen && x < _closeThreshold) SetOpen(false);
+        if (!_isOpen && x > _openThreshold) SetOpen(true);
+        if (_isOpen && x < _closeThreshold) SetOpen(false);
     }
 
     // ════════════════════════════════════════════
@@ -211,6 +227,7 @@ public class PanelHandler : UdonSharpBehaviour
                 if (handlePickup.IsHeld) handlePickup.Drop();
                 handle.localPosition = new Vector3(_slideMin, 0f, handleZOffset);
             }
+
             SetOpen(false);
         }
     }
@@ -241,11 +258,39 @@ public class PanelHandler : UdonSharpBehaviour
     }
 
     /// <summary>
-    /// Move the panel root to the ideal pose (in front of the player).
+    /// Compute the ideal panel pose for VR closed state: bound to the left arm.
+    /// </summary>
+    private void GetLeftArmPose(out Vector3 pos, out Quaternion rot)
+    {
+        VRCPlayerApi.TrackingData leftHand = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.LeftHand);
+        VRCPlayerApi.TrackingData head = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head);
+        
+        // 偏移量：左手柄上方 10cm，向后 10cm (靠近手臂方向)
+        pos = leftHand.position + leftHand.rotation * new Vector3(0, 0.1f, -0.1f);
+        
+        // 使菜单朝向头部 (面板前方 -Z 面向玩家，所以 +Z 远离玩家)
+        Vector3 forwardToHead = (head.position - pos).normalized;
+        if (forwardToHead.sqrMagnitude < 0.001f) forwardToHead = Vector3.forward;
+        
+        // LookRotation(-forwardToHead) 让面板的 -Z 面向头部，此时 +X 在玩家视觉的右侧，符合往右拖拽直觉
+        rot = Quaternion.LookRotation(-forwardToHead) * Quaternion.Euler(30f, 0f, 0f);
+    }
+
+    /// <summary>
+    /// Move the panel root to the ideal pose (in front of the player or left arm).
     /// </summary>
     private void FollowPlayer()
     {
-        GetIdealPanelPose(out Vector3 pos, out Quaternion rot);
+        Vector3 pos;
+        Quaternion rot;
+        if (_isInVR && !_isOpen)
+        {
+            GetLeftArmPose(out pos, out rot);
+        }
+        else
+        {
+            GetIdealPanelPose(out pos, out rot);
+        }
         panelRoot.position = pos;
         panelRoot.rotation = rot;
     }

@@ -42,6 +42,7 @@ public class GravitySimulator : UdonSharpBehaviour
     private float _previousTickTime = 0.05f;
     private uint _frameCount = 0;
     private float _averageDeltaTime = 0.02f;
+    private bool _hasRunInitialStep = false;
 
     // Recenter States
     private int _recenterState = 0; // 0: Idle, 1: Waiting Pos, 2: Waiting Vel, 3: Apply Offset, 4: Reset Offset
@@ -62,6 +63,7 @@ public class GravitySimulator : UdonSharpBehaviour
     private int _idFragmentSizeRange;
     private int _idInitialBodySizeRange;
 
+
     private int _idPosMassPrev, _idInterpolationRatio, _idMaxBodies;
     private int _idMinInteractMass;
     private int _idRandomSeed;
@@ -72,6 +74,7 @@ public class GravitySimulator : UdonSharpBehaviour
 
     void Start()
     {
+        ctrlPanel.InitCtrlPanel();
         // Parameters
         _idGravitationalConstant = VRCShader.PropertyToID("_Udon_GravitationalConstant");
         _idInnerDensity = VRCShader.PropertyToID("_Udon_InnerDensity");
@@ -94,6 +97,7 @@ public class GravitySimulator : UdonSharpBehaviour
 
         _idFragmentSizeRange = VRCShader.PropertyToID("_Udon_FragmentSizeRange");
         _idInitialBodySizeRange = VRCShader.PropertyToID("_Udon_InitialBodySizeRange");
+
 
         _idInterpolationRatio = VRCShader.PropertyToID("_Udon_InterpolationRatio");
         _idMaxBodies = VRCShader.PropertyToID("_Udon_MaxBodies");
@@ -292,7 +296,8 @@ public class GravitySimulator : UdonSharpBehaviour
             return;
         }
 
-        if (isPaused) return;
+        if (isPaused && _hasRunInitialStep) return;
+        _hasRunInitialStep = true;
 
         _timeSinceLastUpdate += Time.deltaTime;
         _frameCount++;
@@ -304,7 +309,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _averageDeltaTime = Mathf.Lerp(_averageDeltaTime, Time.deltaTime, 0.2f);
 
         int currentBatchCount = ctrlPanel.activeBatchCount;
-        
+
         // Use average frame rate (delta time) for auto batch count scaling
         if (currentBatchCount <= 0)
         {
@@ -324,7 +329,7 @@ public class GravitySimulator : UdonSharpBehaviour
         }
         else
         {
-            _actualBatchCount = Mathf.Clamp(currentBatchCount, 1, 256);
+            _actualBatchCount = Mathf.Clamp(currentBatchCount, 1, 64);
             _slowFrameCount = 0;
         }
 

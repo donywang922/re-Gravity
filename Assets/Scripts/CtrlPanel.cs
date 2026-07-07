@@ -13,17 +13,21 @@ public class CtrlPanel : UdonSharpBehaviour
     [Header("Console Configs")] public int defMaxBodies = 64;
     public float defMaxStep = 50f;
     public float defSimSpeed = 1.0f;
+
     public int defBatchCount = 0;
+    public float defSimScale = 1.0f;
 
     [Header("Console")] public TextSlider maxBodiesSlider;
     public TextSlider maxStepSlider;
     public TextSlider simSpeedSlider;
     public TextSlider batchCountSlider;
+    public TextSlider scaleSlider;
 
     [HideInInspector] public int activeMaxBodies;
     [HideInInspector] public float activeMaxStep;
     [HideInInspector] public float activeSimSpeed;
     [HideInInspector] public int activeBatchCount;
+    [HideInInspector] public float activeSimScale;
 
     [Header("Colors Configs")] public float defAvatarLight = 1.0f;
     public float defFlash = 1.0f;
@@ -68,9 +72,9 @@ public class CtrlPanel : UdonSharpBehaviour
     public TextMeshProUGUI debugInfoText;
 
     private int _idFlashBrightness, _idBodyBrightness, _idMinGlowMass;
-    private int _idHslH, _idHslS, _idHslL, _idColor;
+    private int _idHslH, _idHslS, _idHslL, _idColor, _idSimScale;
 
-    void Start()
+    public void InitCtrlPanel()
     {
         _idFlashBrightness = VRCShader.PropertyToID("_Udon_FlashBrightness");
         _idBodyBrightness = VRCShader.PropertyToID("_Udon_BodyBrightness");
@@ -79,11 +83,13 @@ public class CtrlPanel : UdonSharpBehaviour
         _idHslS = VRCShader.PropertyToID("_Udon_HSL_S");
         _idHslL = VRCShader.PropertyToID("_Udon_HSL_L");
         _idColor = VRCShader.PropertyToID("_Udon_Color");
+        _idSimScale = VRCShader.PropertyToID("_Udon_SimScale");
 
         activeMaxBodies = defMaxBodies * 256;
         activeMaxStep = defMaxStep;
         activeSimSpeed = defSimSpeed;
         activeBatchCount = defBatchCount;
+        activeSimScale = defSimScale;
 
         activeHslH = defHslH;
         activeHslS = defHslS;
@@ -107,11 +113,14 @@ public class CtrlPanel : UdonSharpBehaviour
         simSpeedSlider.callbackEvent = nameof(OnSimSpeedChanged);
         batchCountSlider.callbackTarget = this;
         batchCountSlider.callbackEvent = nameof(OnBatchCountChanged);
+        scaleSlider.callbackTarget = this;
+        scaleSlider.callbackEvent = nameof(OnScaleChanged);
 
         maxBodiesSlider.SetValueAndRefresh(defMaxBodies);
         maxStepSlider.SetValueAndRefresh(defMaxStep);
         simSpeedSlider.SetValueAndRefresh(defSimSpeed);
         batchCountSlider.SetValueAndRefresh(defBatchCount);
+        scaleSlider.SetValueAndRefresh(defSimScale);
 
         avatarLightSlider.SetValueAndRefresh(defAvatarLight);
         flashSlider.SetValueAndRefresh(defFlash);
@@ -152,6 +161,13 @@ public class CtrlPanel : UdonSharpBehaviour
         activeBatchCount = (int)batchCountSlider.slider.value;
     }
 
+    public void OnScaleChanged()
+    {
+        activeSimScale = scaleSlider.slider.value;
+        float shaderScale = Mathf.Pow(5.0f / activeDestroyRadius, activeSimScale / 1000.0f);
+        VRCShader.SetGlobalFloat(_idSimScale, shaderScale);
+    }
+
     public void OnModelLightChanged()
     {
         avatarLight.intensity = avatarLightSlider.slider.value;
@@ -186,6 +202,7 @@ public class CtrlPanel : UdonSharpBehaviour
         activeMaxStep = maxStepSlider.slider.value;
         activeSimSpeed = simSpeedSlider.slider.value;
         activeBatchCount = (int)batchCountSlider.slider.value;
+        activeSimScale = scaleSlider.slider.value;
 
         activeGravConst = gravConstSlider.slider.value;
         activeDestroyRadius = destroyRadiusSlider.slider.value;

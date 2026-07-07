@@ -22,6 +22,7 @@ Shader "re-Gravity/Render_BodyImpostor"
             #pragma vertex vert
             #pragma fragment frag
             #pragma target 5.0
+            #pragma multi_compile_instancing
 
             #include "UnityCG.cginc"
             #include "PhysicsCore.cginc"
@@ -30,7 +31,8 @@ Shader "re-Gravity/Render_BodyImpostor"
 
             uniform float _Udon_InterpolationRatio; // 帧间插值比例 [0,1]
             uniform float _Udon_FlashBrightness; // 闪光最大亮度
-            uniform float _Udon_BodyBrightness; // 天体基础亮度
+            uniform float _Udon_BodyBrightness;
+
             uniform float _Udon_MinGlowMass; // 自发光最小质量
             uniform float _Udon_FadeStartDistance; // 远距离淡化起始距离
             uniform sampler2D _Udon_PosMass_Prev; // 上一帧 PosMass（用于插值）
@@ -40,6 +42,7 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float4 vertex : POSITION;
                 float2 uv : TEXCOORD0; // Quad 局部 UV [0,1]
                 float2 uv2 : TEXCOORD1; // 天体 ID 映射 UV
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct v2f
@@ -50,11 +53,15 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float3 viewCenter : TEXCOORD2; // 视空间天体中心位置
                 float radius : TEXCOORD3; // 视觉半径
                 float4 color : COLOR; // 最终颜色（含闪光和发光）
+                UNITY_VERTEX_OUTPUT_STEREO
             };
 
             v2f vert(appdata v)
             {
                 v2f o;
+                UNITY_SETUP_INSTANCE_ID(v);
+                UNITY_INITIALIZE_OUTPUT(v2f, o);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
                 // --- ID 与边界检查 ---
                 uint id = GetIDFromUV(v.uv2);
@@ -68,14 +75,8 @@ Shader "re-Gravity/Render_BodyImpostor"
                     o.color = float4(0, 0, 0, 0);
                     return o;
                 }
-
-                // --- 帧间插值 ---
-                float4 prevPosMass = tex2Dlod(_Udon_PosMass_Prev, float4(v.uv2, 0, 0));
-                float4 currPosMass = tex2Dlod(_Udon_PosMass, float4(v.uv2, 0, 0));
-                float mass = lerp(prevPosMass.w, currPosMass.w, _Udon_InterpolationRatio);
-                float3 worldPos = lerp(prevPosMass.xyz, currPosMass.xyz, _Udon_InterpolationRatio);
-
                 // --- 事件解码与可见性判定 ---
+                //TODO 刚复活的天体EVENT_RESPAWN是不显示且不插值的 (已修复: 提前判定)
                 float4 velMisc = tex2Dlod(_Udon_VelMisc, float4(v.uv2, 0, 0));
                 int eventType;
                 float eventData;
@@ -92,8 +93,19 @@ Shader "re-Gravity/Render_BodyImpostor"
                     return o;
                 }
 
+                // --- 帧间插值 ---
+                float4 prevPosMass = tex2Dlod(_Udon_PosMass_Prev, float4(v.uv2, 0, 0));
+                float4 currPosMass = tex2Dlod(_Udon_PosMass, float4(v.uv2, 0, 0));
+                float mass = lerp(prevPosMass.w, currPosMass.w, _Udon_InterpolationRatio);
+                float3 worldPos = lerp(prevPosMass.xyz, currPosMass.xyz, _Udon_InterpolationRatio);
+
+                // --- 缩放处理 ---
+                float scale = _Udon_SimScale > 0.00001 ? _Udon_SimScale : 1.0;
+                worldPos *= scale;
+                worldPos.y += 1;
+
                 // --- Billboard 设置 ---
-                float radius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio);
+                float radius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio) * scale;
                 float3 viewCenter = mul(UNITY_MATRIX_V, float4(worldPos, 1.0)).xyz;
                 o.radius = radius;
                 o.viewCenter = viewCenter;
@@ -110,7 +122,7 @@ Shader "re-Gravity/Render_BodyImpostor"
 
                 // --- 颜色采样与距离衰减 ---
                 float3 baseColor = tex2Dlod(_Udon_Color, float4(v.uv2, 0, 0)).rgb;
-                float dist = length(worldPos);
+                float dist = length(worldPos); // 还原实际距离计算 fade
                 float fadeT = saturate((dist - _Udon_FadeStartDistance) /
                     max(0.1, _Udon_SpawnRadius - _Udon_FadeStartDistance));
                 float fadeFactor = lerp(1.0, 0.5, fadeT);
@@ -148,6 +160,8 @@ Shader "re-Gravity/Render_BodyImpostor"
 
             fragOut frag(v2f i)
             {
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(i);
+
                 fragOut o;
                 if (i.radius <= 0) discard;
 

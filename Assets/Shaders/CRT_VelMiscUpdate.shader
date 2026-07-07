@@ -10,6 +10,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
             #pragma vertex CustomRenderTextureVertexShader
             #pragma fragment frag
             #pragma target 5.0
+            #pragma fragmentoption ARB_precision_hint_nicest
 
             #include "UnityCustomRenderTexture.cginc"
             #include "PhysicsCore.cginc"

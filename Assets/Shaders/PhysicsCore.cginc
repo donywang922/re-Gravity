@@ -78,6 +78,7 @@ uniform float _Udon_SimSpeed;    // 模拟速度倍率
 uniform float _Udon_MaxStep;     // 最大物理步长
 uniform float _Udon_Frame;       // 帧计数器，用于 hash 种子
 uniform float _Udon_RandomSeed;  // 随机种子，用于初始化着色器
+uniform float _Udon_SimScale;
 
 // 物理参数
 uniform float _Udon_GravitationalConstant;
@@ -109,7 +110,6 @@ uniform sampler2D _Udon_Color;
 
 // 双缓冲纹理（CRT 更新 Pass 使用）
 uniform sampler2D _Udon_PosMass_Next;
-uniform sampler2D _Udon_VelMisc_Settlement;
 uniform sampler2D _Udon_EventData_Next;
 
 
@@ -173,12 +173,10 @@ inline float GetTimeStep() {
 }
 
 // ===========================================================================
-// 事件编码与解码
-// ===========================================================================
-
+// 事件编码与解码 (移动端安全修复版)
+// TODO 这个改回data * 8 + type (已修复)
 // ---------------------------------------------------------------------------
-// VelMisc.w 事件信号: asfloat(asuint(data) 替换低3位为 eventType)
-// 支持负数和精确的浮点数保存，避免 fmod 的精度和负数截断问题
+// VelMisc.w 事件信号: data * 8 + type
 // ---------------------------------------------------------------------------
 inline float EncodeEvent(int type, float data) {
     if (data == 0.0 && type == 0) return 0.0;
