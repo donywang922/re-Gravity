@@ -11,11 +11,11 @@ public class TrailManager : UdonSharpBehaviour
     public CustomRenderTexture trailHistoryB;
     public float updateInterval = 0.1f;
     public float trailRecordDistance = 50.0f; // 每次记录的最小距离阈值
-    public int processBatchSize = 8192; // 每次 Update 处理的天体数量
-    
+    public int processBatchSize = 256; // 每次 Update 处理的天体数量
+
     private CustomRenderTexture _currTrail;
     private CustomRenderTexture _prevTrail;
-    
+
     private Texture2D _top64Tex;
     private Color[] _top64Colors;
     private float _timer = 0;
@@ -25,7 +25,7 @@ public class TrailManager : UdonSharpBehaviour
     private int _idTop64IDs;
     private int _idTrailHistory, _idTrailHistoryPrev, _idTrailRecordDistance;
     private int[] _prevTopIDs = new int[64];
-    
+
     private float[] _readbackData;
     private int[] _topIDs;
     private float[] _topMasses;
@@ -45,7 +45,7 @@ public class TrailManager : UdonSharpBehaviour
         _top64Colors = new Color[64];
         _currTrail = trailHistoryA;
         _prevTrail = trailHistoryB;
-        
+
         _readbackData = new float[65536 * 4];
         _topIDs = new int[64];
         _topMasses = new float[64];
@@ -57,12 +57,27 @@ public class TrailManager : UdonSharpBehaviour
         _idTrailHistory = VRCShader.PropertyToID("_Udon_TrailHistory");
         _idTrailHistoryPrev = VRCShader.PropertyToID("_Udon_TrailHistory_Prev");
         _idTrailRecordDistance = VRCShader.PropertyToID("_Udon_TrailRecordDistance");
-        
+
         VRCShader.SetGlobalTexture(_idTop64IDs, _top64Tex);
         VRCShader.SetGlobalFloat(_idTrailRecordDistance, trailRecordDistance);
-        
+
         if (_currTrail != null) VRCShader.SetGlobalTexture(_idTrailHistory, _currTrail);
         if (_prevTrail != null) VRCShader.SetGlobalTexture(_idTrailHistoryPrev, _prevTrail);
+    }
+
+    public void ClearTrails()
+    {
+        if (trailHistoryA != null) trailHistoryA.Initialize();
+        if (trailHistoryB != null) trailHistoryB.Initialize();
+
+        for (int i = 0; i < 64; i++)
+        {
+            _prevTopIDs[i] = -1;
+            _top64Colors[i] = new Color(-1, 0, 0, 0);
+        }
+
+        _top64Tex.SetPixels(_top64Colors);
+        _top64Tex.Apply();
     }
 
     void Update()
@@ -70,25 +85,23 @@ public class TrailManager : UdonSharpBehaviour
         //已优化：使用一维float数组直接读取RGBAFloat，按活跃天体数量遍历，并缓存数组查询结果。彻底解决掉帧问题。
         VRCShader.SetGlobalFloat(_idTrailRecordDistance, trailRecordDistance);
 
-        if (simulator == null || simulator.isPaused) return;
+        if (simulator.isPaused) return;
 
         // 每帧自动更新 TrailHistory 的 ping-pong
-        if (_prevTrail != null && _currTrail != null)
-        {
-            CustomRenderTexture temp = _currTrail;
-            _currTrail = _prevTrail;
-            _prevTrail = temp;
+        CustomRenderTexture temp = _currTrail;
+        _currTrail = _prevTrail;
+        _prevTrail = temp;
 
-            VRCShader.SetGlobalTexture(_idTrailHistoryPrev, _prevTrail);
-            VRCShader.SetGlobalTexture(_idTrailHistory, _currTrail);
-            _currTrail.Update();
-        }
+        VRCShader.SetGlobalTexture(_idTrailHistoryPrev, _prevTrail);
+        VRCShader.SetGlobalTexture(_idTrailHistory, _currTrail);
+        _currTrail.Update();
+
 
         if (_isProcessingReadback)
         {
-            int activeBodies = simulator != null && simulator.ctrlPanel != null ? simulator.ctrlPanel.activeMaxBodies : 65536;
+            int activeBodies = simulator.ctrlPanel.activeMaxBodies;
             int endIndex = Mathf.Min(_processIndex + processBatchSize, activeBodies);
-            
+
             float threshold = _topMasses[63];
 
             for (int i = _processIndex; i < endIndex; i++)
@@ -103,15 +116,16 @@ public class TrailManager : UdonSharpBehaviour
                         _topIDs[insertPos] = _topIDs[insertPos - 1];
                         insertPos--;
                     }
+
                     _topMasses[insertPos] = m;
                     _topIDs[insertPos] = i;
-                    
+
                     threshold = _topMasses[63];
                 }
             }
-            
+
             _processIndex = endIndex;
-            
+
             if (_processIndex >= activeBodies)
             {
                 _isProcessingReadback = false;
@@ -126,11 +140,11 @@ public class TrailManager : UdonSharpBehaviour
             {
                 _timer = 0;
                 _isReadingBack = true;
-                
+
                 // 总是回读最新的 PosMass 状态
                 // 虽然 posMassIsA 在 GravitySimulator 是 private，但我们回读 posMassA
                 // 只要它是更新好的就行。不过由于两张图交替，读某一张会导致少许延迟。
-                CustomRenderTexture currPosMass = simulator.posMassA; 
+                CustomRenderTexture currPosMass = simulator.posMassA;
                 VRCAsyncGPUReadback.Request(currPosMass, 0, TextureFormat.RGBAFloat, (IUdonEventReceiver)this);
             }
         }
@@ -138,7 +152,7 @@ public class TrailManager : UdonSharpBehaviour
 
     public override void OnAsyncGpuReadbackComplete(VRCAsyncGPUReadbackRequest request)
     {
-        if (request.hasError) 
+        if (request.hasError)
         {
             _isReadingBack = false;
             return;
@@ -195,6 +209,7 @@ public class TrailManager : UdonSharpBehaviour
                 {
                     emptySlotIdx++;
                 }
+
                 if (emptySlotIdx < 64)
                 {
                     _newOutputIDs[emptySlotIdx] = _topIDs[i];
@@ -206,9 +221,9 @@ public class TrailManager : UdonSharpBehaviour
         for (int i = 0; i < 64; i++)
         {
             _prevTopIDs[i] = _newOutputIDs[i];
-            _top64Colors[i] = new Color(_newOutputIDs[i], 0, 0, 0); 
+            _top64Colors[i] = new Color(_newOutputIDs[i], 0, 0, 0);
         }
-        
+
         _top64Tex.SetPixels(_top64Colors);
         _top64Tex.Apply();
     }

@@ -45,9 +45,16 @@ public class GravitySimulator : UdonSharpBehaviour
     private bool _hasRunInitialStep = false;
 
     // Recenter States
-    private int _recenterState = 0; // 0: Idle, 1: Waiting Pos, 2: Waiting Vel, 3: Apply Offset, 4: Reset Offset
+    private int _readBackState = 0; // 0: Idle, 1: Waiting Pos, 2: Waiting Vel, 3: Apply Offset, 4: Reset Offset
+    private int _readBackTarget = 0; // 0: Empty, 1: recenter, 2: snapshot, 3: post recenter, 4: recenter clear up
     private Color[] _posData;
     private Color[] _velData;
+
+    // Snapshot States
+    public SyncManager syncManager;
+    private int _snapshotActiveCount = 0;
+    private Color[] _snapshotPosBuffer = new Color[65536];
+    private Color[] _snapshotVelBuffer = new Color[65536];
 
     // Cached Property IDs
     private int _idGravitationalConstant,
@@ -126,7 +133,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _actualBatchCount = ctrlPanel.activeBatchCount <= 0 ? 1 : ctrlPanel.activeBatchCount;
     }
 
-    public void InitializeShaderGlobals()
+    private void InitializeShaderGlobals()
     {
         VRCShader.SetGlobalFloat(_idInnerDensity, innerDensity);
         VRCShader.SetGlobalFloat(_idOuterDensity, outerDensity);
@@ -155,7 +162,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _cycleCount = 0;
         _timeSinceLastUpdate = 0;
         _frameCount = 0;
-        _recenterState = 0;
+        _readBackState = 0;
         _slowFrameCount = 0;
         VRCShader.SetGlobalFloat(_idApplyOffset, 0.0f);
 
@@ -174,11 +181,25 @@ public class GravitySimulator : UdonSharpBehaviour
         VRCShader.SetGlobalFloat(_idInterpolationRatio, 1.0f);
     }
 
-    public void RecenterAndZeroMomentum()
+    public void StartRecenter()
     {
-        if (!isPaused || _recenterState != 0) return;
+        if (!isPaused || _readBackState != 0) return;
+        _readBackState = 1;
+        _readBackTarget = 1;
+        StartReadBack();
+    }
 
-        _recenterState = 1;
+    public void StartSnapshot()
+    {
+        if (_readBackState != 0) return;
+        isPaused = true;
+        _readBackState = 1;
+        _readBackTarget = 2;
+        StartReadBack();
+    }
+
+    private void StartReadBack()
+    {
         CustomRenderTexture currPosMass = _posMassIsA ? posMassA : posMassB;
         VRCAsyncGPUReadback.Request(currPosMass, 0, TextureFormat.RGBAFloat, (IUdonEventReceiver)this);
     }
@@ -187,33 +208,36 @@ public class GravitySimulator : UdonSharpBehaviour
     {
         if (request.hasError)
         {
-            _recenterState = 0;
+            _readBackState = 0;
+            _readBackTarget = 0;
             return;
         }
 
-        if (_recenterState == 1)
+        if (_readBackState == 1)
         {
-            if (request.TryGetData(_posData))
+            if (!request.TryGetData(_posData))
             {
-                _recenterState = 2;
-                CustomRenderTexture currVelMisc = _velMiscIsA ? velMiscA : velMiscB;
-                VRCAsyncGPUReadback.Request(currVelMisc, 0, TextureFormat.RGBAFloat, (IUdonEventReceiver)this);
+                _readBackState = 0;
+                _readBackTarget = 0;
+                return;
             }
-            else
-            {
-                _recenterState = 0;
-            }
+
+            _readBackState = 2;
+            CustomRenderTexture currVelMisc = _velMiscIsA ? velMiscA : velMiscB;
+            VRCAsyncGPUReadback.Request(currVelMisc, 0, TextureFormat.RGBAFloat, (IUdonEventReceiver)this);
         }
-        else if (_recenterState == 2)
+        else if (_readBackState == 2)
         {
-            if (request.TryGetData(_velData))
+            if (!request.TryGetData(_velData))
             {
-                ProcessRecenter();
+                _readBackState = 0;
+                _readBackTarget = 0;
+                return;
             }
-            else
-            {
-                _recenterState = 0;
-            }
+
+            _readBackState = 0;
+            if (_readBackTarget == 1) ProcessRecenter();
+            else if (_readBackTarget == 2) ProcessSnapshot();
         }
     }
 
@@ -247,12 +271,86 @@ public class GravitySimulator : UdonSharpBehaviour
             VRCShader.SetGlobalVector(_idPosOffset, posOffset);
             VRCShader.SetGlobalVector(_idVelOffset, velOffset);
 
-            _recenterState = 3;
+            _readBackTarget = 3;
         }
         else
         {
-            _recenterState = 0;
+            _readBackTarget = 0;
         }
+    }
+
+    private void ProcessSnapshot()
+    {
+        int currentMaxBodies = ctrlPanel.activeMaxBodies;
+
+        for (int i = 0; i < currentMaxBodies; i++)
+        {
+            if (_posData[i].a > 0)
+            {
+                _snapshotPosBuffer[_snapshotActiveCount] = _posData[i];
+                _snapshotVelBuffer[_snapshotActiveCount] = _velData[i];
+                _snapshotActiveCount++;
+            }
+        }
+
+        syncManager.OnSnapshotComplete(_snapshotActiveCount, _snapshotPosBuffer, _snapshotVelBuffer);
+        _readBackTarget = 0;
+    }
+
+    public void ApplyDownloadedSnapshot(int bodyCount, Color[] posBuffer, Color[] velBuffer)
+    {
+        // isPaused = true;
+        // _hasRunInitialStep = false;
+        //
+        // Texture2D posTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
+        // Texture2D velTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
+        //
+        // Color[] fullPos = new Color[65536];
+        // Color[] fullVel = new Color[65536];
+        //
+        // for (int i = 0; i < bodyCount; i++)
+        // {
+        //     fullPos[i] = posBuffer[i];
+        //     fullVel[i] = velBuffer[i];
+        // }
+        //
+        // posTex.SetPixels(fullPos);
+        // posTex.Apply();
+        // velTex.SetPixels(fullVel);
+        // velTex.Apply();
+        //
+        // VRCGraphics.Blit(posTex, posMassA);
+        // VRCGraphics.Blit(posTex, posMassB);
+        // VRCGraphics.Blit(velTex, velMiscA);
+        // VRCGraphics.Blit(velTex, velMiscB);
+        //
+        // // Clear events
+        // Texture2D clearTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
+        // Color[] clearColors = new Color[65536];
+        // clearTex.SetPixels(clearColors);
+        // clearTex.Apply();
+        //
+        // VRCGraphics.Blit(clearTex, eventDataA);
+        // VRCGraphics.Blit(clearTex, eventDataB);
+        //
+        // // Inform TrailManager to clear if needed, handled by SyncManager
+        //
+        // Destroy(posTex);
+        // Destroy(velTex);
+        // Destroy(clearTex);
+        //
+        // _posMassIsA = true;
+        // _velMiscIsA = true;
+        //
+        // VRCShader.SetGlobalTexture(_idPosMass, posMassA);
+        // VRCShader.SetGlobalTexture(_idPosMassPrev, posMassA);
+        // VRCShader.SetGlobalTexture(_idVelMisc, velMiscA);
+        // VRCShader.SetGlobalTexture(_idEventData, eventDataA);
+        //
+        // _currentPhase = 1;
+        // _currentBatch = 0;
+        //
+        // syncManager.OnApplySnapshotComplete();
     }
 
     void Update()
@@ -265,7 +363,7 @@ public class GravitySimulator : UdonSharpBehaviour
         CustomRenderTexture currVelMisc = _velMiscIsA ? velMiscA : velMiscB;
         CustomRenderTexture nextVelMisc = _velMiscIsA ? velMiscB : velMiscA;
 
-        if (_recenterState == 3)
+        if (_readBackTarget == 3)
         {
             VRCShader.SetGlobalFloat(_idApplyOffset, 1.0f);
 
@@ -278,11 +376,11 @@ public class GravitySimulator : UdonSharpBehaviour
             _posMassIsA = !_posMassIsA;
             _velMiscIsA = !_velMiscIsA;
 
-            _recenterState = 4;
+            _readBackTarget = 4;
             return;
         }
 
-        if (_recenterState == 4)
+        if (_readBackTarget == 4)
         {
             VRCShader.SetGlobalFloat(_idApplyOffset, 0.0f);
 
@@ -292,7 +390,7 @@ public class GravitySimulator : UdonSharpBehaviour
             VRCShader.SetGlobalTexture(_idPosMassPrev, renderCurr); // No interpolation across the teleport
             VRCShader.SetGlobalTexture(_idVelMisc, _velMiscIsA ? velMiscA : velMiscB);
 
-            _recenterState = 0;
+            _readBackTarget = 0;
             return;
         }
 
@@ -305,33 +403,7 @@ public class GravitySimulator : UdonSharpBehaviour
         float ratio = (float)framesSinceUpdate / (_actualBatchCount + 1);
         VRCShader.SetGlobalFloat(_idInterpolationRatio, Mathf.Clamp01(ratio));
 
-        // 增大平滑系数 (0.2)，让平均帧率能更快响应实际掉帧
-        _averageDeltaTime = Mathf.Lerp(_averageDeltaTime, Time.deltaTime, 0.2f);
-
-        int currentBatchCount = ctrlPanel.activeBatchCount;
-
-        // Use average frame rate (delta time) for auto batch count scaling
-        if (currentBatchCount <= 0)
-        {
-            if (_averageDeltaTime > 1.0f / 50.0f)
-            {
-                _slowFrameCount++;
-                if (_slowFrameCount >= 5)
-                {
-                    _actualBatchCount = Mathf.Clamp(_actualBatchCount + 1, 1, 256);
-                    _slowFrameCount = -5;
-                }
-            }
-            else
-            {
-                _slowFrameCount = 0;
-            }
-        }
-        else
-        {
-            _actualBatchCount = Mathf.Clamp(currentBatchCount, 1, 64);
-            _slowFrameCount = 0;
-        }
+        AdjustBatchCount();
 
 
         CustomRenderTexture currEventData = _posMassIsA ? eventDataA : eventDataB;
@@ -396,6 +468,37 @@ public class GravitySimulator : UdonSharpBehaviour
         if (isDebug)
         {
             isPaused = true;
+        }
+    }
+
+    private void AdjustBatchCount()
+    {
+        // 增大平滑系数 (0.2)，让平均帧率能更快响应实际掉帧
+        _averageDeltaTime = Mathf.Lerp(_averageDeltaTime, Time.deltaTime, 0.2f);
+
+        int currentBatchCount = ctrlPanel.activeBatchCount;
+
+        // Use average frame rate (delta time) for auto batch count scaling
+        if (currentBatchCount <= 0)
+        {
+            if (_averageDeltaTime > 1.0f / 50.0f)
+            {
+                _slowFrameCount++;
+                if (_slowFrameCount >= 5)
+                {
+                    _actualBatchCount = Mathf.Clamp(_actualBatchCount + 1, 1, 256);
+                    _slowFrameCount = -5;
+                }
+            }
+            else
+            {
+                _slowFrameCount = 0;
+            }
+        }
+        else
+        {
+            _actualBatchCount = Mathf.Clamp(currentBatchCount, 1, 64);
+            _slowFrameCount = 0;
         }
     }
 

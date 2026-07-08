@@ -228,12 +228,21 @@ public class CtrlPanel : UdonSharpBehaviour
     public void OnBtnRecenter()
     {
         simulator.isPaused = true;
-        simulator.RecenterAndZeroMomentum();
+        simulator.StartRecenter();
     }
+
+    [Header("Network")] public SyncManager syncManager;
 
     public void OnBtnSnapshot()
     {
-        simulator.isPaused = true;
+        if (syncManager != null)
+        {
+            syncManager.OnBtnTakeSnapshot();
+        }
+        else
+        {
+            simulator.isPaused = true;
+        }
     }
 
     public void OnBtnReset()
