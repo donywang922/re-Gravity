@@ -47,8 +47,6 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
 
                 float max_mass_swallowed = -1.0;
                 float max_mass_absorbed = -1.0;
-                float swallowed_mass_sum = 0.0;
-                float3 swallowed_momentum = float3(0, 0, 0);
                 float mass_settle_mass = mass;
 
                 // --- 状态转换 (仅在周期初执行) ---
@@ -56,19 +54,15 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 {
                     if (current_event == EVENT_SWALLOWED)
                     {
-                        uint target_id = (uint)current_data;
-                        float2 target_uv = GetUVFromID(target_id);
-                        float3 target_vel = tex2Dlod(_Udon_VelMisc, float4(target_uv, 0, 0)).xyz;
-                        float3 new_vel = (2.0 * target_vel - vel) * 2.0;
-                        return float4(new_vel, EncodeEvent(EVENT_DEAD, 0.0));
+                        current_event = EVENT_DEAD;
+                        current_data = 0.0;
                     }
-
-                    if (current_event == EVENT_RESPAWN)
+                    else if (current_event == EVENT_RESPAWN)
                     {
-                        return float4(vel, EncodeEvent(EVENT_NONE, 300.0));
+                        current_event = EVENT_NONE;
+                        current_data = 300.0;
                     }
-
-                    if (current_event == EVENT_MASS_SETTLE)
+                    else if (current_event == EVENT_MASS_SETTLE)
                     {
                         base_next_event = EVENT_NONE;
                         base_next_data = 100.0;
@@ -178,7 +172,12 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                             else if (target_event == EVENT_SHATTER || target_event == EVENT_SWALLOWED)
                             {
                                 float2 other_uv = GetUVFromID((uint)target_data);
-                                float3 other_vel = tex2Dlod(_Udon_VelMisc, float4(other_uv, 0, 0)).xyz;
+                                float4 other_vel_misc = tex2Dlod(_Udon_VelMisc, float4(other_uv, 0, 0));
+                                int other_event; float other_data; DecodeEvent(other_vel_misc.w, other_event, other_data);
+                                float3 other_vel = other_vel_misc.xyz;
+                                if (other_event == EVENT_DEAD) {
+                                    other_vel = target_vel_misc.xyz;
+                                }
                                 new_vel = (target_vel_misc.xyz + other_vel) * 0.5;
                             }
                             else
@@ -274,9 +273,8 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     if (other_event == EVENT_SWALLOWED && abs(other_data - (float)id) < 0.5)
                     {
                         iter_event = EVENT_MASS_SETTLE;
+                        vel = (mass_settle_mass * vel + other_mass * other_vel_misc.xyz) / (mass_settle_mass + other_mass);
                         mass_settle_mass += other_mass;
-                        swallowed_mass_sum += other_mass;
-                        swallowed_momentum += other_mass * other_vel_misc.xyz;
                     }
 
                     // 2.（结算吸收)
@@ -285,9 +283,8 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                         iter_event = EVENT_MASS_SETTLE;
                         float overlap_vol = CalculateOverlapVolume(other_radius, my_radius, dist);
                         float lost_mass = overlap_vol * _Udon_OuterDensity;
+                        vel = (mass_settle_mass * vel + lost_mass * other_vel_misc.xyz) / (mass_settle_mass + lost_mass);
                         mass_settle_mass += lost_mass;
-                        swallowed_mass_sum += lost_mass;
-                        swallowed_momentum += lost_mass * other_vel_misc.xyz;
                     }
 
                     bool is_smaller = (mass < other_mass) || (mass == other_mass && id > i);
@@ -406,11 +403,6 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 // 仅在最后一个 Batch 做最终事件结算
                 if (_Udon_EndID >= _Udon_MaxBodies - 1.5)
                 {
-                    if (swallowed_mass_sum > 0.0)
-                    {
-                        vel = (mass * vel + swallowed_momentum) / (mass + swallowed_mass_sum);
-                    }
-
                     if (next_event == EVENT_NONE)
                     {
                         next_event = base_next_event;
