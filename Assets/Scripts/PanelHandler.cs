@@ -2,19 +2,14 @@ using UdonSharp;
 using UnityEngine;
 using UnityEngine.UI;
 using VRC.SDKBase;
+using VRC.Udon.Common;
 
 /// <summary>
 /// Controls the sliding panel UI.
-/// Object hierarchy: panelRoot -> { PanelHandle (VRC_Pickup), Canvas }
-///
 /// Behavior:
-///   - When UI is closed and handle is not held: root follows the player.
-///   - When UI is open OR handle is held: root is fixed in world space.
-///   - Handle is constrained to root-local X axis within ±slideLength/2,
-///     and offset on the Z axis by handleZOffset to sit closer to the player.
-///   - Hysteresis thresholds: open when handle reaches 70%, close at 30%.
-///   - On release the handle snaps (lerps) to the nearest endpoint.
-///   - On open the panel is placed in front of the user, facing them, tilted up 19°.
+///   - PC: Press Tab to toggle.
+///   - VR: Double click trigger to toggle.
+///   - VR: Hold grip (fist) and swipe right to open, swipe left to close.
 ///   - Auto-close applies to both VR and Desktop when player walks too far.
 /// </summary>
 [UdonBehaviourSyncMode(BehaviourSyncMode.None)]
@@ -22,8 +17,6 @@ public class PanelHandler : UdonSharpBehaviour
 {
     // ── References ──────────────────────────────
     [Header("References")] public Transform panelRoot;
-    public Transform handle;
-    public VRC_Pickup handlePickup;
     public GameObject canvas;
     public Image panelImage;
 
@@ -31,12 +24,6 @@ public class PanelHandler : UdonSharpBehaviour
     public Sprite vrSprite;
 
     // ── Tuning ──────────────────────────────────
-    [Header("Slide")] public float slideLength = 0.3f;
-    public float snapSpeed = 10f;
-
-    [Tooltip("Negative value moves handle toward the player (local -Z).")]
-    public float handleZOffset = -0.02f;
-
     [Header("Panel Open Position")] public float panelDistance = 0.7f;
     public float heightOffset = 0.3f;
     public float minPanelHeight = 0.3f;
@@ -47,17 +34,33 @@ public class PanelHandler : UdonSharpBehaviour
     [Tooltip("Delay (seconds) before opening the panel after joining, to allow player height sync.")]
     public float initialOpenDelay = 3f;
 
+    [Header("Swipe Gesture")]
+    public float minSwipeDistance = 0.2f;
+    public float maxSwipeTime = 0.4f;
+
     // ── Runtime state ───────────────────────────
     private VRCPlayerApi _localPlayer;
     private bool _isOpen;
     private bool _isInVR;
     private bool _initialized;
 
-    // Cached slide boundaries
-    private float _slideMin;
-    private float _slideMax;
-    private float _openThreshold; // handle must reach here to open  (70%)
-    private float _closeThreshold; // handle must drop here to close  (30%)
+    // ── Input State ─────────────────────────────
+    private float _lastTriggerTime = -100f;
+    private const float DoubleClickThreshold = 0.3f;
+
+    private bool _leftGripHeld;
+    private bool _rightGripHeld;
+    private bool _leftSwipeTriggered;
+    private bool _rightSwipeTriggered;
+
+    private Vector3 _leftLastPos;
+    private Vector3 _rightLastPos;
+
+    private float _leftSwipeDistX;
+    private float _leftSwipeTime;
+
+    private float _rightSwipeDistX;
+    private float _rightSwipeTime;
 
     /// <summary>Whether the panel UI is currently open.</summary>
     public bool IsOpen => _isOpen;
@@ -65,34 +68,6 @@ public class PanelHandler : UdonSharpBehaviour
     // ════════════════════════════════════════════
     //  Lifecycle
     // ════════════════════════════════════════════
-    private void Start()
-    {
-        _slideMin = -slideLength / 2f;
-        _slideMax = slideLength / 2f;
-        _openThreshold = _slideMin + slideLength * 0.7f; // 70% from closed end
-        _closeThreshold = _slideMin + slideLength * 0.3f; // 30% from closed end
-    }
-
-    private float _lastTriggerTime = -100f;
-    private const float DoubleClickThreshold = 0.3f;
-
-    public override void InputUse(bool value, VRC.Udon.Common.UdonInputEventArgs args)
-    {
-        if (!_initialized || !_isInVR) return;
-
-        if (value)
-        {
-            if (Time.time - _lastTriggerTime < DoubleClickThreshold)
-            {
-                SetOpen(!_isOpen);
-                _lastTriggerTime = -100f; // reset to prevent triple-click triggering again immediately
-            }
-            else
-            {
-                _lastTriggerTime = Time.time;
-            }
-        }
-    }
 
     private void Update()
     {
@@ -104,143 +79,176 @@ public class PanelHandler : UdonSharpBehaviour
             return;
         }
 
-        if (_isInVR) UpdateVR();
-        else UpdateDesktop();
+        if (_isOpen)
+        {
+            CheckAutoClose();
+        }
+
+        if (_isInVR)
+        {
+            UpdateVRGestures();
+        }
+        else
+        {
+            if (Input.GetKeyDown(KeyCode.Tab))
+            {
+                SetOpen(!_isOpen);
+            }
+        }
     }
 
     private void Initialize()
     {
         _isInVR = _localPlayer.IsUserInVR();
         panelImage.sprite = _isInVR ? vrSprite : pcSprite;
-        handle.gameObject.SetActive(_isInVR);
 
         // Start closed; schedule a delayed open to let player height sync
-        handle.localPosition = new Vector3(_slideMin, 0f, handleZOffset);
         SetOpen(false);
-
         SendCustomEventDelayedSeconds(nameof(DelayedInitialOpen), initialOpenDelay);
 
         _initialized = true;
     }
 
-    /// <summary>
-    /// Called after initialOpenDelay seconds to open the panel once player
-    /// tracking data (especially height) has stabilised.
-    /// </summary>
     public void DelayedInitialOpen()
     {
-        handle.localPosition = new Vector3(_slideMax, 0f, handleZOffset);
         SetOpen(true);
     }
 
     // ════════════════════════════════════════════
-    //  VR mode
+    //  Input Handling
     // ════════════════════════════════════════════
 
-    private void UpdateVR()
+    public override void InputUse(bool value, UdonInputEventArgs args)
     {
-        bool isHeld = handlePickup.IsHeld;
+        if (!_initialized || !_isInVR) return;
 
-        // 1. Position the handle
-        if (isHeld) ConstrainHandle();
-        else SnapHandle();
-
-        // 2. Determine open / close
-        UpdateOpenState();
-
-        // 3. Auto-close when too far away
-        if (_isOpen) CheckAutoClose();
-
-        // 4. Follow player only when closed AND not held
-        if (!_isOpen && !isHeld) FollowPlayer();
+        if (value)
+        {
+            if (Time.time - _lastTriggerTime < DoubleClickThreshold)
+            {
+                SetOpen(!_isOpen);
+                _lastTriggerTime = -100f; // reset
+            }
+            else
+            {
+                _lastTriggerTime = Time.time;
+            }
+        }
     }
 
-    /// <summary>
-    /// While held, clamp the handle to root-local X axis within [slideMin, slideMax].
-    /// Y is zeroed and Z is set to handleZOffset so the handle cannot leave the rail.
-    /// </summary>
-    private void ConstrainHandle()
+    public override void InputGrab(bool value, UdonInputEventArgs args)
     {
-        Vector3 lp = handle.localPosition;
-        lp.x = Mathf.Clamp(lp.x, _slideMin, _slideMax);
-        lp.y = 0f;
-        lp.z = handleZOffset;
-        handle.localPosition = lp;
-        handle.rotation = panelRoot.rotation;
+        if (!_initialized || !_isInVR) return;
+
+        if (args.handType == HandType.LEFT)
+        {
+            _leftGripHeld = value;
+            if (value)
+            {
+                _leftLastPos = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.LeftHand).position;
+                _leftSwipeDistX = 0f;
+                _leftSwipeTime = 0f;
+                _leftSwipeTriggered = false;
+            }
+        }
+        else if (args.handType == HandType.RIGHT)
+        {
+            _rightGripHeld = value;
+            if (value)
+            {
+                _rightLastPos = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.RightHand).position;
+                _rightSwipeDistX = 0f;
+                _rightSwipeTime = 0f;
+                _rightSwipeTriggered = false;
+            }
+        }
     }
 
-    /// <summary>
-    /// When released, lerp the handle toward the current-state endpoint
-    /// (open → slideMax, closed → slideMin).
-    /// </summary>
-    private void SnapHandle()
+    private void UpdateVRGestures()
     {
-        float target = _isOpen ? _slideMax : _slideMin;
-        Vector3 lp = handle.localPosition;
-        lp.x = Mathf.Lerp(lp.x, target, Time.deltaTime * snapSpeed);
-        lp.y = 0f;
-        lp.z = handleZOffset;
-        handle.localPosition = lp;
-        handle.rotation = panelRoot.rotation;
+        if (_leftGripHeld && !_leftSwipeTriggered)
+        {
+            ProcessSwipe(HandType.LEFT, ref _leftLastPos, ref _leftSwipeDistX, ref _leftSwipeTime, ref _leftSwipeTriggered);
+        }
+
+        if (_rightGripHeld && !_rightSwipeTriggered)
+        {
+            ProcessSwipe(HandType.RIGHT, ref _rightLastPos, ref _rightSwipeDistX, ref _rightSwipeTime, ref _rightSwipeTriggered);
+        }
     }
 
-    /// <summary>
-    /// Hysteresis check: open when handle exceeds the 70% threshold,
-    /// close when it drops below the 30% threshold.
-    /// </summary>
-    private void UpdateOpenState()
+    private void ProcessSwipe(HandType hand, ref Vector3 lastPos, ref float swipeDistX, ref float swipeTime, ref bool triggered)
     {
-        float x = handle.localPosition.x;
-        if (!_isOpen && x > _openThreshold) SetOpen(true);
-        if (_isOpen && x < _closeThreshold) SetOpen(false);
-    }
+        VRCPlayerApi.TrackingDataType trackType = hand == HandType.LEFT ? VRCPlayerApi.TrackingDataType.LeftHand : VRCPlayerApi.TrackingDataType.RightHand;
+        Vector3 currentPos = _localPlayer.GetTrackingData(trackType).position;
+        Vector3 headRight = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head).rotation * Vector3.right;
 
-    // ════════════════════════════════════════════
-    //  Desktop mode
-    // ════════════════════════════════════════════
+        float frameDeltaX = Vector3.Dot(currentPos - lastPos, headRight);
+        float dt = Time.deltaTime;
+        
+        if (dt > 0.001f)
+        {
+            // If movement is very slow, reset the swipe accumulation (speed < 0.1m/s)
+            float frameSpeed = Mathf.Abs(frameDeltaX) / dt;
+            if (frameSpeed < 0.1f)
+            {
+                swipeDistX = 0f;
+                swipeTime = 0f;
+            }
+            else
+            {
+                // If changed direction, reset accumulation
+                if ((frameDeltaX > 0 && swipeDistX < 0) || (frameDeltaX < 0 && swipeDistX > 0))
+                {
+                    swipeDistX = 0f;
+                    swipeTime = 0f;
+                }
 
-    private void UpdateDesktop()
-    {
-        if (Input.GetKeyDown(KeyCode.Tab)) SetOpen(!_isOpen);
+                swipeDistX += frameDeltaX;
+                swipeTime += dt;
 
-        if (_isOpen) CheckAutoClose();
+                if (Mathf.Abs(swipeDistX) >= minSwipeDistance)
+                {
+                    if (swipeTime <= maxSwipeTime)
+                    {
+                        // Trigger action based on direction
+                        // Swipe right (> 0) to open, Swipe left (< 0) to close
+                        bool openTarget = swipeDistX > 0;
+                        if (_isOpen != openTarget)
+                        {
+                            SetOpen(openTarget);
+                        }
+                        triggered = true;
+                    }
+                    else
+                    {
+                        // Took too long to reach distance, reset to allow trying again without releasing grip
+                        swipeDistX = 0f;
+                        swipeTime = 0f;
+                    }
+                }
+            }
+        }
 
-        // When closed, keep following so the next open appears near the player
-        if (!_isOpen) FollowPlayer();
+        lastPos = currentPos;
     }
 
     // ════════════════════════════════════════════
     //  Shared helpers
     // ════════════════════════════════════════════
 
-    /// <summary>
-    /// If the player walks too far from the panel, force-close and drop the handle.
-    /// Works for both VR and Desktop.
-    /// </summary>
     private void CheckAutoClose()
     {
         float dist = Vector3.Distance(_localPlayer.GetPosition(), panelRoot.position);
         if (dist > maxDistance)
         {
-            if (_isInVR)
-            {
-                if (handlePickup.IsHeld) handlePickup.Drop();
-                handle.localPosition = new Vector3(_slideMin, 0f, handleZOffset);
-            }
-
             SetOpen(false);
         }
     }
 
-    /// <summary>
-    /// Compute the ideal panel pose: directly in front of the player at
-    /// head-height minus heightOffset (clamped to minPanelHeight),
-    /// facing the player with a 19° upward tilt.
-    /// </summary>
     private void GetIdealPanelPose(out Vector3 pos, out Quaternion rot)
     {
-        VRCPlayerApi.TrackingData head =
-            _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head);
+        VRCPlayerApi.TrackingData head = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head);
 
         // Horizontal forward (ignore vertical look angle)
         Vector3 forward = head.rotation * Vector3.forward;
@@ -257,52 +265,11 @@ public class PanelHandler : UdonSharpBehaviour
         rot = Quaternion.LookRotation(forward) * Quaternion.Euler(19f, 0f, 0f);
     }
 
-    /// <summary>
-    /// Compute the ideal panel pose for VR closed state: bound to the left arm.
-    /// </summary>
-    private void GetLeftArmPose(out Vector3 pos, out Quaternion rot)
-    {
-        VRCPlayerApi.TrackingData leftHand = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.LeftHand);
-        VRCPlayerApi.TrackingData head = _localPlayer.GetTrackingData(VRCPlayerApi.TrackingDataType.Head);
-        
-        // 偏移量：左手柄上方 10cm，向后 10cm (靠近手臂方向)
-        pos = leftHand.position + leftHand.rotation * new Vector3(0, 0.1f, -0.1f);
-        
-        // 使菜单朝向头部 (面板前方 -Z 面向玩家，所以 +Z 远离玩家)
-        Vector3 forwardToHead = (head.position - pos).normalized;
-        if (forwardToHead.sqrMagnitude < 0.001f) forwardToHead = Vector3.forward;
-        
-        // LookRotation(-forwardToHead) 让面板的 -Z 面向头部，此时 +X 在玩家视觉的右侧，符合往右拖拽直觉
-        rot = Quaternion.LookRotation(-forwardToHead) * Quaternion.Euler(30f, 0f, 0f);
-    }
-
-    /// <summary>
-    /// Move the panel root to the ideal pose (in front of the player or left arm).
-    /// </summary>
-    private void FollowPlayer()
-    {
-        Vector3 pos;
-        Quaternion rot;
-        if (_isInVR && !_isOpen)
-        {
-            GetLeftArmPose(out pos, out rot);
-        }
-        else
-        {
-            GetIdealPanelPose(out pos, out rot);
-        }
-        panelRoot.position = pos;
-        panelRoot.rotation = rot;
-    }
-
-    /// <summary>
-    /// Toggle open/close state.  When opening, the panel root is snapped to
-    /// the ideal pose (same calculation as the follow target).
-    /// </summary>
     private void SetOpen(bool open)
     {
         _isOpen = open;
         canvas.SetActive(open);
+        
         if (open)
         {
             GetIdealPanelPose(out Vector3 pos, out Quaternion rot);

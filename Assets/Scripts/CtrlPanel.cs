@@ -1,3 +1,4 @@
+using network;
 using UdonSharp;
 using UnityEngine;
 using UnityEngine.UI;
@@ -235,14 +236,7 @@ public class CtrlPanel : UdonSharpBehaviour
 
     public void OnBtnSnapshot()
     {
-        if (syncManager != null)
-        {
-            syncManager.OnBtnTakeSnapshot();
-        }
-        else
-        {
-            simulator.isPaused = true;
-        }
+        syncManager.OnBtnTakeSnapshot();
     }
 
     public void OnBtnReset()

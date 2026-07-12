@@ -1,10 +1,10 @@
+using network;
 using UdonSharp;
 using UnityEngine;
 using VRC.SDK3.Rendering;
 using VRC.SDKBase;
 using VRC.Udon.Common.Interfaces;
 
-[DefaultExecutionOrder(2)]
 public class GravitySimulator : UdonSharpBehaviour
 {
     [Header("CRTs Group A")] public CustomRenderTexture posMassA;
@@ -299,58 +299,58 @@ public class GravitySimulator : UdonSharpBehaviour
 
     public void ApplyDownloadedSnapshot(int bodyCount, Color[] posBuffer, Color[] velBuffer)
     {
-        // isPaused = true;
-        // _hasRunInitialStep = false;
-        //
-        // Texture2D posTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
-        // Texture2D velTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
-        //
-        // Color[] fullPos = new Color[65536];
-        // Color[] fullVel = new Color[65536];
-        //
-        // for (int i = 0; i < bodyCount; i++)
-        // {
-        //     fullPos[i] = posBuffer[i];
-        //     fullVel[i] = velBuffer[i];
-        // }
-        //
-        // posTex.SetPixels(fullPos);
-        // posTex.Apply();
-        // velTex.SetPixels(fullVel);
-        // velTex.Apply();
-        //
-        // VRCGraphics.Blit(posTex, posMassA);
-        // VRCGraphics.Blit(posTex, posMassB);
-        // VRCGraphics.Blit(velTex, velMiscA);
-        // VRCGraphics.Blit(velTex, velMiscB);
-        //
-        // // Clear events
-        // Texture2D clearTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
-        // Color[] clearColors = new Color[65536];
-        // clearTex.SetPixels(clearColors);
-        // clearTex.Apply();
-        //
-        // VRCGraphics.Blit(clearTex, eventDataA);
-        // VRCGraphics.Blit(clearTex, eventDataB);
-        //
-        // // Inform TrailManager to clear if needed, handled by SyncManager
-        //
-        // Destroy(posTex);
-        // Destroy(velTex);
-        // Destroy(clearTex);
-        //
-        // _posMassIsA = true;
-        // _velMiscIsA = true;
-        //
-        // VRCShader.SetGlobalTexture(_idPosMass, posMassA);
-        // VRCShader.SetGlobalTexture(_idPosMassPrev, posMassA);
-        // VRCShader.SetGlobalTexture(_idVelMisc, velMiscA);
-        // VRCShader.SetGlobalTexture(_idEventData, eventDataA);
-        //
-        // _currentPhase = 1;
-        // _currentBatch = 0;
-        //
-        // syncManager.OnApplySnapshotComplete();
+        isPaused = true;
+        _hasRunInitialStep = false;
+        
+        Texture2D posTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
+        Texture2D velTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
+        
+        Color[] fullPos = new Color[65536];
+        Color[] fullVel = new Color[65536];
+        
+        for (int i = 0; i < bodyCount; i++)
+        {
+            fullPos[i] = posBuffer[i];
+            fullVel[i] = velBuffer[i];
+        }
+        
+        posTex.SetPixels(fullPos);
+        posTex.Apply();
+        velTex.SetPixels(fullVel);
+        velTex.Apply();
+        
+        VRCGraphics.Blit(posTex, posMassA);
+        VRCGraphics.Blit(posTex, posMassB);
+        VRCGraphics.Blit(velTex, velMiscA);
+        VRCGraphics.Blit(velTex, velMiscB);
+        
+        // Clear events
+        Texture2D clearTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
+        Color[] clearColors = new Color[65536];
+        clearTex.SetPixels(clearColors);
+        clearTex.Apply();
+        
+        VRCGraphics.Blit(clearTex, eventDataA);
+        VRCGraphics.Blit(clearTex, eventDataB);
+        
+        // Inform TrailManager to clear if needed, handled by SyncManager
+        
+        Destroy(posTex);
+        Destroy(velTex);
+        Destroy(clearTex);
+        
+        _posMassIsA = true;
+        _velMiscIsA = true;
+        
+        VRCShader.SetGlobalTexture(_idPosMass, posMassA);
+        VRCShader.SetGlobalTexture(_idPosMassPrev, posMassA);
+        VRCShader.SetGlobalTexture(_idVelMisc, velMiscA);
+        VRCShader.SetGlobalTexture(_idEventData, eventDataA);
+        
+        _currentPhase = 1;
+        _currentBatch = 0;
+        
+        syncManager.OnApplySnapshotComplete();
     }
 
     void Update()
