@@ -189,6 +189,24 @@ public class GravitySimulator : UdonSharpBehaviour
         StartReadBack();
     }
 
+    public void LogError(string msg)
+    {
+        Debug.LogError($"[GravitySimulator] {msg}");
+    }
+
+    private bool IsBodyActive(int index)
+    {
+        if (_posData[index].a <= 0f) return false;
+        
+        float signal = _velData[index].a;
+        if (signal == 0f) return true;
+        
+        byte[] bytes = System.BitConverter.GetBytes(signal);
+        uint usig = System.BitConverter.ToUInt32(bytes, 0);
+        int type = (int)(usig & 0x7u);
+        return type != 6; // EVENT_DEAD = 6
+    }
+
     public void StartSnapshot()
     {
         if (_readBackState != 0) return;
@@ -251,7 +269,7 @@ public class GravitySimulator : UdonSharpBehaviour
         for (int i = 0; i < currentMaxBodies; i++)
         {
             float mass = _posData[i].a;
-            if (mass > 0)
+            if (IsBodyActive(i))
             {
                 totalMass += mass;
                 cx += _posData[i].r * mass;
@@ -281,11 +299,12 @@ public class GravitySimulator : UdonSharpBehaviour
 
     private void ProcessSnapshot()
     {
+        _snapshotActiveCount = 0;
         int currentMaxBodies = ctrlPanel.activeMaxBodies;
 
         for (int i = 0; i < currentMaxBodies; i++)
         {
-            if (_posData[i].a > 0)
+            if (IsBodyActive(i))
             {
                 _snapshotPosBuffer[_snapshotActiveCount] = _posData[i];
                 _snapshotVelBuffer[_snapshotActiveCount] = _velData[i];
@@ -305,13 +324,24 @@ public class GravitySimulator : UdonSharpBehaviour
         Texture2D posTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
         Texture2D velTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
         
+        byte[] deadBytes = System.BitConverter.GetBytes(0x00800006u);
+        float deadSignal = System.BitConverter.ToSingle(deadBytes, 0);
+
         Color[] fullPos = new Color[65536];
         Color[] fullVel = new Color[65536];
-        
-        for (int i = 0; i < bodyCount; i++)
+
+        for (int i = 0; i < 65536; i++)
         {
-            fullPos[i] = posBuffer[i];
-            fullVel[i] = velBuffer[i];
+            if (i < bodyCount)
+            {
+                fullPos[i] = posBuffer[i];
+                fullVel[i] = velBuffer[i];
+            }
+            else
+            {
+                fullPos[i] = new Color(0, 0, 0, 0);
+                fullVel[i] = new Color(0, 0, 0, deadSignal);
+            }
         }
         
         posTex.SetPixels(fullPos);

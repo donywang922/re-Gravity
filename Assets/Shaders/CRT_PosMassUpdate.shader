@@ -67,7 +67,8 @@ Shader "re-Gravity/CRT_PosMassUpdate"
                         pos = target_pos_mass.xyz + rand_dir * target_radius;
                     } else {
                         // 破碎/被吞噬，生成范围是围绕接触面的一圈（环形）
-                        float3 n_dir = length(target_dir) > 0.0001 ? normalize(target_dir) : float3(0, 1, 0);
+                        float3 fallback_n = normalize(float3(hash(seed + 7u) - 0.5, hash(seed + 8u) - 0.5, hash(seed + 9u) - 0.5));
+                        float3 n_dir = length(target_dir) > 0.0001 ? normalize(target_dir) : fallback_n;
                         float x = length(target_dir);
                         float ring_radius = 0.1;
                         if (x < target_radius) {

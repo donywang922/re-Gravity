@@ -28,7 +28,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 {
                     return float4(old_vel_misc.xyz - _Udon_VelOffset, old_vel_misc.w);
                 }
-                
+
                 // 已实现：全天体并行更新，按引力源分批。状态刷新和计算仅在对应帧结算。
                 if (id >= _Udon_MaxBodies)
                     return old_vel_misc;
@@ -42,8 +42,8 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 float current_data;
                 DecodeEvent(old_vel_misc.w, current_event, current_data);
 
-                int base_next_event = EVENT_NONE;
-                float base_next_data = 0.0;
+                int next_event = EVENT_NONE;
+                float next_data = 0.0;
 
                 float max_mass_swallowed = -1.0;
                 float max_mass_absorbed = -1.0;
@@ -61,23 +61,25 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     {
                         current_event = EVENT_NONE;
                         current_data = 300.0;
+                        next_event = EVENT_NONE;
+                        next_data = 300.0;
                     }
                     else if (current_event == EVENT_MASS_SETTLE)
                     {
-                        base_next_event = EVENT_NONE;
-                        base_next_data = 100.0;
+                        next_event = EVENT_NONE;
+                        next_data = 100.0;
                     }
                     else if (current_event == EVENT_NONE && current_data > 0.5)
                     {
-                        base_next_event = EVENT_NONE;
-                        base_next_data = max(0.0, current_data - 1.0);
+                        next_event = EVENT_NONE;
+                        next_data = max(0.0, current_data - 1.0);
                     }
                 }
                 else
                 {
-                    // 非首批：已结算的一次性状态（SWALLOWED→DEAD, RESPAWN→NONE）在首批已 return，
-                    // 到达此处的只可能是需要跨 Batch 累加的活跃态或死亡态。
-                    // 活跃天体的事件恢复在下方活跃天体段落处理。
+                    // 非首批：直接继承上一批次的中间状态，以便后续累加
+                    next_event = current_event;
+                    next_data = current_data;
                 }
 
                 // --- 死亡天体逻辑 ---
@@ -155,27 +157,40 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                             float target_data;
                             DecodeEvent(target_vel_misc.w, target_event, target_data);
 
+                            // 安全检查：如果目标在批次间已死亡，其 VelMisc.xyz
+                            // 已被覆盖为死体扫描中间值 (min_score, total_mass_loss, total_dead)，
+                            // 不是速度。将其清零以避免产生异常速度的碎片。
+                            if (target_event == EVENT_DEAD)
+                            {
+                                target_vel_misc = float4(0, 0, 0, target_vel_misc.w);
+                            }
+
                             float3 new_vel = float3(0, 0, 0);
 
                             if (target_event == EVENT_TEAR)
                             {
                                 float4 target_pos_mass = tex2Dlod(_Udon_PosMass, float4(target_uv, 0, 0));
-                                float target_radius = GetRadius(target_pos_mass.w, _Udon_InnerDensity, _Udon_OuterDensity,
-                                                                _Udon_InnerRatio);
+                                float target_radius = GetRadius(target_pos_mass.w, _Udon_InnerDensity,
+                                                _Udon_OuterDensity,
+                                                _Udon_InnerRatio);
                                 float esc_speed = sqrt(
                                     2.0 * _Udon_GravitationalConstant * target_pos_mass.w / max(0.1, target_radius));
+                                float3 fallback_tear = normalize(float3(hash(seed + 10u) - 0.5, hash(seed + 11u) - 0.5, hash(seed + 12u) - 0.5));
                                 float3 tear_dir = dot(target_dir, target_dir) > 0.000001
-                   ? normalize(target_dir)
-                   : float3(0, 1, 0);
+                                                                      ? normalize(target_dir)
+                                                                      : fallback_tear;
                                 new_vel = target_vel_misc.xyz + tear_dir * esc_speed;
                             }
                             else if (target_event == EVENT_SHATTER || target_event == EVENT_SWALLOWED)
                             {
                                 float2 other_uv = GetUVFromID((uint)target_data);
                                 float4 other_vel_misc = tex2Dlod(_Udon_VelMisc, float4(other_uv, 0, 0));
-                                int other_event; float other_data; DecodeEvent(other_vel_misc.w, other_event, other_data);
+                                int other_event;
+                                float other_data;
+                                DecodeEvent(other_vel_misc.w, other_event, other_data);
                                 float3 other_vel = other_vel_misc.xyz;
-                                if (other_event == EVENT_DEAD) {
+                                if (other_event == EVENT_DEAD)
+                                {
                                     other_vel = target_vel_misc.xyz;
                                 }
                                 new_vel = (target_vel_misc.xyz + other_vel) * 0.5;
@@ -184,7 +199,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                             {
                                 float speed = log(target_event_data.w + 1.0) * 0.5;
                                 float3 rand_vec = float3(hash(seed + 1u) - 0.5, hash(seed + 2u) - 0.5,
-                                                        hash(seed + 3u) - 0.5);
+                                    hash(seed + 3u) - 0.5);
                                 new_vel = target_vel_misc.xyz + normalize(rand_vec) * speed;
                             }
 
@@ -193,11 +208,9 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
 
                         return float4(0, 0, 0, EncodeEvent(EVENT_DEAD, 0.0));
                     }
-                    else
-                    {
-                        // 还没结算完，将中间状态塞进通道传递给下一次Batch
-                        return float4(min_score, total_mass_loss, total_dead, EncodeEvent(EVENT_DEAD, (float)selected_target));
-                    }
+                    // 还没结算完，将中间状态塞进通道传递给下一次Batch
+                    return float4(min_score, total_mass_loss, total_dead,
+                                                   EncodeEvent(EVENT_DEAD, (float)selected_target));
                 }
 
                 // --- 活跃天体逻辑 ---
@@ -208,23 +221,24 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 float dt = GetTimeStep();
                 float3 total_force = float3(0, 0, 0);
 
-                int next_event = EVENT_NONE;
-                float next_data = 0.0;
                 float3 vel_drag = float3(0, 0, 0);
 
                 // 从上一个 Batch 的输出中恢复事件累加状态
                 if (_Udon_StartID > 0.5)
                 {
-                    next_event = current_event;
-                    next_data = current_data;
                     // 恢复优先级比较器
-                    if (current_event == EVENT_SWALLOWED) {
+                    if (current_event == EVENT_SWALLOWED)
+                    {
                         float2 prev_uv = GetUVFromID((uint)current_data);
                         max_mass_swallowed = tex2Dlod(_Udon_PosMass, float4(prev_uv, 0, 0)).w;
-                    } else if (current_event == EVENT_ABSORBED) {
+                    }
+                    else if (current_event == EVENT_ABSORBED)
+                    {
                         float2 prev_uv = GetUVFromID((uint)current_data);
                         max_mass_absorbed = tex2Dlod(_Udon_PosMass, float4(prev_uv, 0, 0)).w;
-                    } else if (current_event == EVENT_MASS_SETTLE) {
+                    }
+                    else if (current_event == EVENT_MASS_SETTLE)
+                    {
                         mass_settle_mass = current_data;
                     }
                 }
@@ -256,7 +270,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     float3 dir = diff * inv_dist;
 
                     float other_radius = GetRadius(other_mass, _Udon_InnerDensity, _Udon_OuterDensity,
-        _Udon_InnerRatio);
+                  _Udon_InnerRatio);
                     float other_inner_radius = GetInnerRadius(other_radius, _Udon_InnerRatio);
                     float sum_outer_radii = my_radius + other_radius;
                     float sum_inner_radii = my_inner_radius + other_inner_radius;
@@ -273,7 +287,8 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     if (other_event == EVENT_SWALLOWED && abs(other_data - (float)id) < 0.5)
                     {
                         iter_event = EVENT_MASS_SETTLE;
-                        vel = (mass_settle_mass * vel + other_mass * other_vel_misc.xyz) / (mass_settle_mass + other_mass);
+                        vel = (mass_settle_mass * vel + other_mass * other_vel_misc.xyz) / (mass_settle_mass +
+                            other_mass);
                         mass_settle_mass += other_mass;
                     }
 
@@ -283,7 +298,8 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                         iter_event = EVENT_MASS_SETTLE;
                         float overlap_vol = CalculateOverlapVolume(other_radius, my_radius, dist);
                         float lost_mass = overlap_vol * _Udon_OuterDensity;
-                        vel = (mass_settle_mass * vel + lost_mass * other_vel_misc.xyz) / (mass_settle_mass + lost_mass);
+                        vel = (mass_settle_mass * vel + lost_mass * other_vel_misc.xyz) / (mass_settle_mass +
+                            lost_mass);
                         mass_settle_mass += lost_mass;
                     }
 
@@ -354,7 +370,11 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     }
 
                     // 优先级判定
-                    if (iter_event == EVENT_SWALLOWED)
+                    if (current_event == EVENT_NONE && current_data > 299.5)
+                    {
+                        // 刚复活的这一帧赋予无敌，禁止任何事件覆盖，确保渲染端能正确捕获 300.0 并过滤插帧
+                    }
+                    else if (iter_event == EVENT_SWALLOWED)
                     {
                         if (other_mass > max_mass_swallowed)
                         {
@@ -403,11 +423,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 // 仅在最后一个 Batch 做最终事件结算
                 if (_Udon_EndID >= _Udon_MaxBodies - 1.5)
                 {
-                    if (next_event == EVENT_NONE)
-                    {
-                        next_event = base_next_event;
-                        next_data = base_next_data;
-                    }
+                    // 事件已在前面的批次正确继承并覆盖，此处无需再做额外赋值
 
                     // 越界销毁逻辑
                     float destroy_radius = _Udon_DestroyRadius > 0.0 ? _Udon_DestroyRadius : 50000.0;

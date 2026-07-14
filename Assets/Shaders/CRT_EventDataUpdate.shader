@@ -51,7 +51,9 @@ Shader "re-Gravity/CRT_EventDataUpdate"
 
                     float dist = length(target_pos_mass.xyz - my_pos_mass.xyz);
                     float3 raw_dir = target_pos_mass.xyz - my_pos_mass.xyz;
-                    float3 norm_dir = length(raw_dir) > 0.001 ? normalize(raw_dir) : float3(0, 1, 0);
+                    uint fallback_seed = my_id * 7919u + (uint)(_Udon_Frame * 13.0);
+                    float3 fallback_dir = normalize(float3(hash(fallback_seed) - 0.5, hash(fallback_seed + 1u) - 0.5, hash(fallback_seed + 2u) - 0.5));
+                    float3 norm_dir = length(raw_dir) > 0.001 ? normalize(raw_dir) : fallback_dir;
                     
                     float my_mass = my_pos_mass.w;
                     float target_mass = target_pos_mass.w;
@@ -85,6 +87,7 @@ Shader "re-Gravity/CRT_EventDataUpdate"
                 }
 
                 // 限制质量损失防止碎片数过多
+                // TODO 10.0应该是最小碎片质量
                 if (abs(mass_loss) > MAX_BODIES * 10.0) {
                     mass_loss = sign(mass_loss) * MAX_BODIES * 10.0;
                 }

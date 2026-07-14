@@ -99,6 +99,13 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float mass = lerp(prevPosMass.w, currPosMass.w, _Udon_InterpolationRatio);
                 float3 worldPos = lerp(prevPosMass.xyz, currPosMass.xyz, _Udon_InterpolationRatio);
 
+                // 修复：刚从 EVENT_RESPAWN 转换过来的天体不要插值，直接使用新位置，防止乱飞闪烁
+                if (eventType == EVENT_NONE && eventData > 299.5)
+                {
+                    mass = currPosMass.w;
+                    worldPos = currPosMass.xyz;
+                }
+
                 // --- 缩放处理 ---
                 float scale = _Udon_SimScale > 0.00001 ? _Udon_SimScale : 1.0;
                 worldPos *= scale;

@@ -43,6 +43,7 @@ namespace network
         private int _sendTotalChunks = 0;
         private float _sendLastAckTime = 0f;
         private int _sendRetryCount = 0;
+        private int _nextChunkToSend = -1;
 
         // --- Sender queue (for multiple requesters) ---
         private int[] _pendingReceivers = new int[16];
@@ -69,7 +70,6 @@ namespace network
         private void Start()
         {
             loadingOverlay.SetActive(false);
-            ClaimLocalSlot();
             UpdatePlayerList();
         }
 
@@ -112,8 +112,9 @@ namespace network
                 }
                 else
                 {
-                    // 重发当前 chunk
-                    SendChunk(_sendCurrentChunk);
+                    // 重发当前 chunk（延迟以避开频率限制）
+                    _nextChunkToSend = _sendCurrentChunk;
+                    SendCustomEventDelayedSeconds(nameof(_DelayedSendChunk), 0.15f);
                     _sendLastAckTime = Time.time;
                 }
             }
@@ -201,14 +202,34 @@ namespace network
 
         private PlayerState GetLocalPlayerState()
         {
-            if (_localPlayerState != null) return _localPlayerState;
+            VRCPlayerApi local = Networking.LocalPlayer;
+            if (!Utilities.IsValid(local)) return null;
+
+            if (_localPlayerState != null && 
+                _localPlayerState.ownerPlayerId == local.playerId && 
+                Networking.GetOwner(_localPlayerState.gameObject) == local)
+            {
+                return _localPlayerState;
+            }
+
+            _localPlayerState = null;
             ClaimLocalSlot();
             return _localPlayerState;
         }
 
         private TransferChannel GetLocalTransferChannel()
         {
-            if (_localTransferChannel != null) return _localTransferChannel;
+            VRCPlayerApi local = Networking.LocalPlayer;
+            if (!Utilities.IsValid(local)) return null;
+
+            if (_localTransferChannel != null && 
+                _localTransferChannel.ownerPlayerId == local.playerId && 
+                Networking.GetOwner(_localTransferChannel.gameObject) == local)
+            {
+                return _localTransferChannel;
+            }
+
+            _localTransferChannel = null;
             ClaimLocalSlot();
             return _localTransferChannel;
         }
@@ -225,28 +246,28 @@ namespace network
             VRCPlayerApi local = Networking.LocalPlayer;
             if (!Utilities.IsValid(local)) return;
 
-            // Ensure enough rows
-            while (_currentRowCount < players.Length)
-            {
-                GameObject row = Instantiate(playerRowPrefab, playerListContent);
-                PlayerRow rowScript = (PlayerRow)row.GetComponent(typeof(UdonBehaviour));
-                rowScript.manager = this;
-                _playerRows[_currentRowCount] = rowScript;
-                _currentRowCount++;
-            }
-
             // Hide all first
             for (int i = 0; i < _currentRowCount; i++)
             {
                 _playerRows[i].gameObject.SetActive(false);
             }
 
-            // Populate valid players
+            int activeRowIndex = 0;
             for (int i = 0; i < players.Length; i++)
             {
                 if (!Utilities.IsValid(players[i])) continue;
 
-                PlayerRow row = _playerRows[i];
+                // Ensure enough rows
+                if (activeRowIndex >= _currentRowCount)
+                {
+                    GameObject newRowObj = Instantiate(playerRowPrefab, playerListContent);
+                    PlayerRow rowScript = (PlayerRow)newRowObj.GetComponent(typeof(UdonBehaviour));
+                    rowScript.manager = this;
+                    _playerRows[_currentRowCount] = rowScript;
+                    _currentRowCount++;
+                }
+
+                PlayerRow row = _playerRows[activeRowIndex];
                 row.gameObject.SetActive(true);
                 row.playerId = players[i].playerId;
                 row.playerNameText.text = players[i].displayName;
@@ -254,9 +275,9 @@ namespace network
                 // 查找此玩家的 PlayerState，判断是否有快照
                 PlayerState ps = GetPlayerStateByPlayerId(players[i].playerId);
                 bool hasSnap = ps != null && ps.hasSnapshot;
-                // bool isNotSelf = players[i].playerId != local.playerId;
-                // row.syncButtonObj.SetActive(hasSnap && isNotSelf);
                 row.syncButtonObj.SetActive(hasSnap);
+
+                activeRowIndex++;
             }
         }
 
@@ -364,7 +385,9 @@ namespace network
                         }
                         else
                         {
-                            SendChunk(nextChunk);
+                            // 延迟发送以避开 RequestSerialization 频率限制
+                            _nextChunkToSend = nextChunk;
+                            SendCustomEventDelayedSeconds(nameof(_DelayedSendChunk), 0.15f);
                         }
                     }
                 }
@@ -565,6 +588,19 @@ namespace network
         //  SENDER — SEND CHUNKS
         // ====================================================================
 
+        public void _DelayedSendChunk()
+        {
+            if (!_isSending || _nextChunkToSend == -1) return;
+
+            int chunkToSend = _nextChunkToSend;
+            _nextChunkToSend = -1;
+
+            // 防止过期的 delayed event 跳过 chunk
+            if (chunkToSend < _sendCurrentChunk) return;
+
+            SendChunk(chunkToSend);
+        }
+
         private void StartSending(int receiverId)
         {
             TransferChannel tc = GetLocalTransferChannel();
@@ -598,6 +634,16 @@ namespace network
 
             int startIndex = chunkIndex * CHUNK_SIZE;
             int count = Mathf.Min(CHUNK_SIZE, _localSnapshotSize - startIndex);
+
+            // 安全防护：如果数组未初始化则手动初始化
+            if (tc.chunkPosData == null || tc.chunkPosData.Length != CHUNK_SIZE)
+            {
+                tc.chunkPosData = new Color[CHUNK_SIZE];
+            }
+            if (tc.chunkVelData == null || tc.chunkVelData.Length != CHUNK_SIZE)
+            {
+                tc.chunkVelData = new Color[CHUNK_SIZE];
+            }
 
             for (int i = 0; i < count; i++)
             {
@@ -703,6 +749,12 @@ namespace network
         // ====================================================================
 
         public void OnApplySnapshotComplete()
+        {
+            if (loadingText != null) loadingText.text = "下载完成";
+            SendCustomEventDelayedSeconds(nameof(_HideLoadingOverlay), 2.0f);
+        }
+
+        public void _HideLoadingOverlay()
         {
             if (loadingOverlay != null) loadingOverlay.SetActive(false);
         }
