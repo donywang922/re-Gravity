@@ -17,26 +17,26 @@ Shader "re-Gravity/CRT_InitVelMisc_TestCollision"
 
             #include "UnityCustomRenderTexture.cginc"
             #include "PhysicsCore.cginc"
-            
+
             float4 frag(v2f_init_customrendertexture IN) : SV_Target
             {
                 uint id = GetIDFromUV(IN.texcoord.xy);
-                
+
                 if (id == 0u)
                 {
                     // 巨大天体初始静止
                     return float4(0.0, 0.0, 0.0, 0.0);
                 }
-                else if (id == 1u)
+                if (id == 1u)
                 {
                     // 小天体以极快速度 (-Z方向) 冲向巨大天体
                     // 速度可以根据需要在这里调整，负号代表朝向原点
-                    float speed = 2000.0; 
-                    return float4(0.0, 0.0, -speed, 0.0);
+                    float speed = 2000.0;
+                    return float4(0.0, -speed, 0.0, 0.0);
                 }
-                
+
                 // 其他天体静止
-                return float4(0.0, 0.0, 0.0, 0.0);
+                return float4(0.0, 0.0, 0.0, EncodeEvent(EVENT_DEAD, 0));
             }
             ENDCG
         }

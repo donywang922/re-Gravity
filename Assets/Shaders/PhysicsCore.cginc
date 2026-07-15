@@ -33,6 +33,9 @@
 // 物理阈值
 // ---------------------------------------------------------------------------
 #define ROCHE_LIMIT_FACTOR   1.5   // 洛希极限 = 外径之和 × 此系数
+#define SHATTER_MASS_RATIO   0.9   // 吞噬破碎时，转化成碎片的质量比例
+#define ABSORB_RATE_LIMIT    2.0   // 吸收速率限制，即每秒最多吸收目标自身质量的倍数
+#define FRICTION_RATE_LIMIT  1.0   // 摩擦阻力限制，与吸收速率一致
 
 // ---------------------------------------------------------------------------
 // Stats CRT 布局 (16 × 8)
@@ -79,6 +82,7 @@ uniform float _Udon_MaxStep;     // 最大物理步长
 uniform float _Udon_Frame;       // 帧计数器，用于 hash 种子
 uniform float _Udon_RandomSeed;  // 随机种子，用于初始化着色器
 uniform float _Udon_SimScale;
+uniform float _Udon_Cycle;
 
 // 物理参数
 uniform float _Udon_GravitationalConstant;
@@ -174,10 +178,6 @@ inline float GetTimeStep() {
 
 // ===========================================================================
 // 事件编码与解码 (移动端安全修复版)
-// TODO 这个改回data * 8 + type (已修复)
-// ---------------------------------------------------------------------------
-// VelMisc.w 事件信号: data * 8 + type
-// ---------------------------------------------------------------------------
 inline float EncodeEvent(int type, float data) {
     if (data == 0.0 && type == 0) return 0.0;
     float safeData = (data == 0.0) ? asfloat(0x00800000u) : data;

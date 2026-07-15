@@ -431,13 +431,14 @@ public class GravitySimulator : UdonSharpBehaviour
         _frameCount++;
         int framesSinceUpdate = _currentPhase == 1 ? _currentBatch + 1 : _actualBatchCount + 1;
         float ratio = (float)framesSinceUpdate / (_actualBatchCount + 1);
-        VRCShader.SetGlobalFloat(_idInterpolationRatio, Mathf.Clamp01(ratio));
+        // VRCShader.SetGlobalFloat(_idInterpolationRatio, Mathf.Clamp01(ratio));
 
         AdjustBatchCount();
 
 
-        CustomRenderTexture currEventData = _posMassIsA ? eventDataA : eventDataB;
-        CustomRenderTexture nextEventData = _posMassIsA ? eventDataB : eventDataA;
+        // EventData 不再需要双缓冲，总是使用 A
+        CustomRenderTexture currEventData = eventDataA;
+        CustomRenderTexture nextEventData = eventDataA;
 
         // Render Bindings
         VRCShader.SetGlobalTexture(_idPosMass, currPosMass);
@@ -483,7 +484,11 @@ public class GravitySimulator : UdonSharpBehaviour
             VRCShader.SetGlobalTexture(_idPosMassNext, nextPosMass);
 
             // Queue Updates
-            nextEventData.Update();
+            // EventData 只在偶数帧（刚产生事件后）更新，保留数据给奇数帧（重生）和下一个偶数帧（死亡统计）读取
+            if (_cycleCount % 2 == 0)
+            {
+                nextEventData.Update();
+            }
             nextPosMass.Update();
 
             _posMassIsA = !_posMassIsA;

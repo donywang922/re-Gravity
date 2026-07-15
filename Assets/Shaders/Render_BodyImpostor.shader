@@ -82,7 +82,7 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float eventData;
                 DecodeEvent(velMisc.w, eventType, eventData);
 
-                if (eventType == EVENT_DEAD || eventType == EVENT_RESPAWN)
+                if (eventType == EVENT_DEAD )
                 {
                     o.pos = float4(0, 0, 0, 0);
                     o.uv = v.uv;
@@ -98,13 +98,6 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float4 currPosMass = tex2Dlod(_Udon_PosMass, float4(v.uv2, 0, 0));
                 float mass = lerp(prevPosMass.w, currPosMass.w, _Udon_InterpolationRatio);
                 float3 worldPos = lerp(prevPosMass.xyz, currPosMass.xyz, _Udon_InterpolationRatio);
-
-                // 修复：刚从 EVENT_RESPAWN 转换过来的天体不要插值，直接使用新位置，防止乱飞闪烁
-                if (eventType == EVENT_NONE && eventData > 299.5)
-                {
-                    mass = currPosMass.w;
-                    worldPos = currPosMass.xyz;
-                }
 
                 // --- 缩放处理 ---
                 float scale = _Udon_SimScale > 0.00001 ? _Udon_SimScale : 1.0;
@@ -143,7 +136,11 @@ Shader "re-Gravity/Render_BodyImpostor"
                 if (eventType == EVENT_NONE && eventData > 0.0)
                 {
                     flash = saturate(eventData / 300.0) * _Udon_FlashBrightness;
+                }else if (eventType == EVENT_MASS_SETTLE)
+                {
+                    flash = saturate(1.0 / 3.0) * _Udon_FlashBrightness;
                 }
+                
 
                 float glow = 0.0;
                 if (mass > _Udon_MinGlowMass && _Udon_MinGlowMass > 0.0)

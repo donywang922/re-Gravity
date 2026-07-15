@@ -21,21 +21,21 @@ Shader "re-Gravity/CRT_InitPosMass_TestCollision"
             float4 frag(v2f_init_customrendertexture IN) : SV_Target
             {
                 uint id = GetIDFromUV(IN.texcoord.xy);
-                
+
                 if (id == 0u)
                 {
                     // 巨大天体位于原点
-                    return float4(0.0, 0.0, 0.0, 2000000.0);
+                    return float4(0.0, 0.0, 0.0, 20000000.0);
                 }
-                else if (id == 1u)
+                if (id == 1u)
                 {
                     // 小天体位于 Z 轴远处
                     float startZ = 500.0;
-                    return float4(0.0, 0.0, startZ, 100000.0);
+                    return float4(0.0, startZ, 0.0, 100000.0);
                 }
-                
+
                 // 其他天体质量为 0（死亡状态），并移到视野外防止渲染干扰
-                return float4(0.0, -99999.0, 0.0, 0.0); 
+                return float4(0.0, -99999.0, 0.0, 0.0);
             }
             ENDCG
         }
