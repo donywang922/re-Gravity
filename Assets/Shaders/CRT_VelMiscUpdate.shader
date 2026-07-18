@@ -132,7 +132,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                                 2.0 * _Udon_GravitationalConstant * target_pos_mass.w / max(0.1, target_radius));
                             new_vel = target_vel_misc.xyz + n_dir * esc_speed;
                         }
-                        // 碰撞和吞噬
+                        // 碰撞和吞噬（目标存活）
                         else if (target_event == EVENT_SHATTER || (target_event == EVENT_SWALLOWED && target_data > -
                             0.5))
                         {
@@ -159,6 +159,30 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                                 float esc_speed = sqrt(2.0 * _Udon_GravitationalConstant * target_pos_mass.w / max(0.1, target_radius)) * 1.5;
                                 new_vel = outward_dir * esc_speed + target_vel_misc.xyz;
                             }
+                        }
+                        // 目标已被吞噬死亡——从 target_event_data.w 解码吞噬者
+                        else if (target_event == EVENT_DEAD)
+                        {
+                            uint loss_bits = asuint(mass_loss);
+                            int absorber_id = (int)(loss_bits & 0xFFFFu);
+                            float2 absorber_uv = GetUVFromID(absorber_id);
+                            float4 absorber_pos_mass = tex2Dlod(_Udon_PosMass, float4(absorber_uv, 0, 0));
+                            float4 absorber_vel_misc = tex2Dlod(_Udon_VelMisc, float4(absorber_uv, 0, 0));
+                            float absorber_radius = GetRadius(absorber_pos_mass.w, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio);
+
+                            uint seed_frame = (uint)(_Udon_Frame * 13.0 + id * 17.0);
+                            float actual_ring_radius = max(0.1, ring_radius) * (0.8 + 0.4 * hash(seed_frame + 5u));
+
+                            float3 up = abs(n_dir.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
+                            float3 tangent = normalize(cross(n_dir, up));
+                            float3 bitangent = cross(n_dir, tangent);
+                            float angle = hash(seed_frame + 4u) * TWO_PI;
+                            float3 ring_offset = (tangent * cos(angle) + bitangent * sin(angle)) * actual_ring_radius;
+
+                            float3 spread_dir = length(ring_offset) > 0.0001 ? normalize(ring_offset) : float3(0, 1, 0);
+                            float3 spawn_relative_dir = normalize(n_dir + spread_dir * 1.5);
+                            float esc_speed = sqrt(2.0 * _Udon_GravitationalConstant * absorber_pos_mass.w / max(0.1, absorber_radius)) * 2.0;
+                            new_vel = absorber_vel_misc.xyz + spawn_relative_dir * esc_speed * 1.2;
                         }
                         return float4(new_vel, EncodeEvent(EVENT_RESPAWN, (float)final_selected_target));
                     }

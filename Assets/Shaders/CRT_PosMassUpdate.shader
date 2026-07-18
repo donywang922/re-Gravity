@@ -96,10 +96,16 @@ Shader "re-Gravity/CRT_PosMassUpdate"
 
                         float angle = hash(seed + 4u) * TWO_PI;
                         float3 ring_offset = (tangent * cos(angle) + bitangent * sin(angle)) * actual_ring_radius;
-                        
+
                         if (is_swallowed)
                         {
-                            pos = target_pos_mass.xyz + n_dir * target_radius * 1.5 + ring_offset;
+                            // 目标已死（被吞噬），用 mass_loss 里编码的吞噬者 id 定位
+                            uint loss_bits = asuint(mass_loss);
+                            int absorber_id = (int)(loss_bits & 0xFFFFu);
+                            float2 absorber_uv = GetUVFromID(absorber_id);
+                            float4 absorber_pos_mass = tex2Dlod(_Udon_PosMass, float4(absorber_uv, 0, 0));
+                            float absorber_radius = GetRadius(absorber_pos_mass.w, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio);
+                            pos = absorber_pos_mass.xyz + n_dir * absorber_radius * 1.5 + ring_offset;
                         }
                         else
                         {

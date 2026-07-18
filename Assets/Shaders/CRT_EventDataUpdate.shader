@@ -75,7 +75,12 @@ Shader "re-Gravity/CRT_EventDataUpdate"
                         if (my_event == EVENT_SWALLOWED)
                         {
                             // 吞噬破碎：直接按小天体百分比质量计算，负数标记
-                            mass_loss = -(my_mass * SHATTER_MASS_RATIO);
+                            // 将吞噬者(target_id)编码到 mass_loss 的低16位，
+                            // 供死亡统计和碎片重生定位使用
+                            float raw_loss = -(my_mass * SHATTER_MASS_RATIO);
+                            uint loss_bits = asuint(raw_loss);
+                            loss_bits = (loss_bits & 0xFFFF0000u) | ((uint)target_id & 0xFFFFu);
+                            mass_loss = asfloat(loss_bits);
                             // 吞噬时，方向取自身速度的反方向
                             float3 my_vel = my_vel_misc.xyz;
                             float3 swallow_dir = length(my_vel) > 0.001 ? normalize(-my_vel) : float3(0, 1, 0);
