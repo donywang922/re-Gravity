@@ -25,6 +25,10 @@ public class GravitySimulator : UdonSharpBehaviour
     [Tooltip("Bodies below this mass directly merge on outer radii overlap.")]
     public float minInteractMass = 2.0f;
 
+    [Range(0.05f, 0.75f)]
+    [Tooltip("Fraction of the configured body capacity reserved as DEAD slots for fragment recycling.")]
+    public float fragmentPoolRatio = 0.25f;
+
     public float fadeStartDistance = 250.0f;
 
     [Header("States")] public bool isPaused = false;
@@ -34,12 +38,14 @@ public class GravitySimulator : UdonSharpBehaviour
     private int _currentBatch = 0;
     private int _cycleCount = 0;
     private int _actualBatchCount = 1;
+    private int _pendingBatchCount = 1;
     private int _slowFrameCount = 0;
     private bool _posMassIsA = true;
     private bool _velMiscIsA = true;
 
     private float _timeSinceLastUpdate = 0f;
     private float _previousTickTime = 0.05f;
+    private float _physicsTickTime = 0.05f;
     private uint _frameCount = 0;
     private float _averageDeltaTime = 0.02f;
     private bool _hasRunInitialStep = false;
@@ -47,12 +53,16 @@ public class GravitySimulator : UdonSharpBehaviour
     // Recenter States
     private int _readBackState = 0; // 0: Idle, 1: Waiting Pos, 2: Waiting Vel, 3: Apply Offset, 4: Reset Offset
     private int _readBackTarget = 0; // 0: Empty, 1: recenter, 2: snapshot, 3: post recenter, 4: recenter clear up
+    private bool _trailOffsetPending = false;
+    private int _trailOffsetWaitFrames = 0;
     private Color[] _posData;
     private Color[] _velData;
 
     // Snapshot States
     public SyncManager syncManager;
     private int _snapshotActiveCount = 0;
+    private bool _snapshotRequested = false;
+    private bool _snapshotReadbackNextFrame = false;
     private Color[] _snapshotPosBuffer = new Color[65536];
     private Color[] _snapshotVelBuffer = new Color[65536];
 
@@ -66,17 +76,16 @@ public class GravitySimulator : UdonSharpBehaviour
         _idFadeStartDistance;
 
     private int _idDeltaTime, _idSimSpeed, _idMaxStep, _idFrame, _idCycle;
-    private int _idPosMass, _idVelMisc, _idEventData, _idStartId, _idEndId;
+    private int _idPosMass, _idVelMisc, _idEventData, _idEventMeta, _idStartId, _idEndId;
     private int _idFragmentSizeRange;
     private int _idInitialBodySizeRange;
 
 
-    private int _idPosMassPrev, _idInterpolationRatio, _idMaxBodies;
+    private int _idPosMassPrev, _idInterpolationRatio, _idMaxBodies, _idInitialActiveBodies;
     private int _idMinInteractMass;
     private int _idRandomSeed;
 
 
-    private int _idPosMassNext, _idEventDataNext;
     private int _idApplyOffset, _idPosOffset, _idVelOffset;
 
     void Start()
@@ -108,6 +117,7 @@ public class GravitySimulator : UdonSharpBehaviour
 
         _idInterpolationRatio = VRCShader.PropertyToID("_Udon_InterpolationRatio");
         _idMaxBodies = VRCShader.PropertyToID("_Udon_MaxBodies");
+        _idInitialActiveBodies = VRCShader.PropertyToID("_Udon_InitialActiveBodies");
         _idRandomSeed = VRCShader.PropertyToID("_Udon_RandomSeed");
 
         _idApplyOffset = VRCShader.PropertyToID("_Udon_ApplyOffset");
@@ -118,9 +128,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _idPosMass = VRCShader.PropertyToID("_Udon_PosMass");
         _idVelMisc = VRCShader.PropertyToID("_Udon_VelMisc");
         _idEventData = VRCShader.PropertyToID("_Udon_EventData");
-
-        _idPosMassNext = VRCShader.PropertyToID("_Udon_PosMass_Next");
-        _idEventDataNext = VRCShader.PropertyToID("_Udon_EventData_Next");
+        _idEventMeta = VRCShader.PropertyToID("_Udon_EventMeta");
 
 
         _idPosMassPrev = VRCShader.PropertyToID("_Udon_PosMass_Prev");
@@ -130,7 +138,6 @@ public class GravitySimulator : UdonSharpBehaviour
         InitializeShaderGlobals();
         ResetSimulation();
         isPaused = true;
-        _actualBatchCount = ctrlPanel.activeBatchCount <= 0 ? 1 : ctrlPanel.activeBatchCount;
     }
 
     private void InitializeShaderGlobals()
@@ -143,7 +150,13 @@ public class GravitySimulator : UdonSharpBehaviour
 
     public void ResetSimulation()
     {
-        VRCShader.SetGlobalFloat(_idMaxBodies, ctrlPanel.activeMaxBodies);
+        int maxBodies = Mathf.Clamp(ctrlPanel.activeMaxBodies, 2, 65536);
+        float effectivePoolRatio = Mathf.Clamp(fragmentPoolRatio, 0.05f, 0.75f);
+        int reservedSlots = Mathf.Clamp(Mathf.RoundToInt(maxBodies * effectivePoolRatio), 1, maxBodies - 1);
+        int initialActiveBodies = maxBodies - reservedSlots;
+
+        VRCShader.SetGlobalFloat(_idMaxBodies, maxBodies);
+        VRCShader.SetGlobalFloat(_idInitialActiveBodies, initialActiveBodies);
         VRCShader.SetGlobalFloat(_idGravitationalConstant, ctrlPanel.activeGravConst);
         VRCShader.SetGlobalFloat(_idDestroyRadius, ctrlPanel.activeDestroyRadius);
         VRCShader.SetGlobalFloat(_idSpawnRadius, ctrlPanel.activeSpawnRadius);
@@ -160,10 +173,23 @@ public class GravitySimulator : UdonSharpBehaviour
         _currentPhase = 1;
         _currentBatch = 0;
         _cycleCount = 0;
-        _timeSinceLastUpdate = 0;
+        _timeSinceLastUpdate = 0f;
+        _previousTickTime = 0.05f;
+        _physicsTickTime = 0.05f;
+        _averageDeltaTime = 0.02f;
         _frameCount = 0;
         _readBackState = 0;
+        _readBackTarget = 0;
+        _trailOffsetPending = false;
+        _trailOffsetWaitFrames = 0;
         _slowFrameCount = 0;
+        _snapshotRequested = false;
+        _snapshotReadbackNextFrame = false;
+        _hasRunInitialStep = true;
+        _actualBatchCount = ctrlPanel.activeBatchCount <= 0
+            ? 1
+            : Mathf.Clamp(ctrlPanel.activeBatchCount, 1, 64);
+        _pendingBatchCount = _actualBatchCount;
         VRCShader.SetGlobalFloat(_idApplyOffset, 0.0f);
 
 
@@ -174,11 +200,17 @@ public class GravitySimulator : UdonSharpBehaviour
 
         VRCShader.SetGlobalTexture(_idPosMass, currPosMass);
         VRCShader.SetGlobalTexture(_idPosMassPrev, currPosMass);
+        VRCShader.SetGlobalTexture(_idVelMisc, velMiscA);
 
-        CustomRenderTexture currEventData = _posMassIsA ? eventDataA : eventDataB;
-        VRCShader.SetGlobalTexture(_idEventData, currEventData);
+        VRCShader.SetGlobalTexture(_idEventData, eventDataA);
+        VRCShader.SetGlobalTexture(_idEventMeta, eventDataB);
 
         VRCShader.SetGlobalFloat(_idInterpolationRatio, 1.0f);
+
+        if (syncManager != null && syncManager.trailManager != null)
+        {
+            syncManager.trailManager.ClearTrails();
+        }
     }
 
     public void StartRecenter()
@@ -209,8 +241,25 @@ public class GravitySimulator : UdonSharpBehaviour
 
     public void StartSnapshot()
     {
-        if (_readBackState != 0) return;
+        if (_readBackState != 0 || _snapshotRequested || _snapshotReadbackNextFrame) return;
+
+        // Snapshots are coherent after an odd (respawn) cycle has completed.
+        bool isSafeBoundary = isPaused && _currentPhase == 1 && _currentBatch == 0 && (_cycleCount % 2 == 0);
+        if (isSafeBoundary)
+        {
+            BeginSnapshotReadback();
+            return;
+        }
+
+        _snapshotRequested = true;
+        isPaused = false;
+    }
+
+    private void BeginSnapshotReadback()
+    {
         isPaused = true;
+        _snapshotRequested = false;
+        _snapshotReadbackNextFrame = false;
         _readBackState = 1;
         _readBackTarget = 2;
         StartReadBack();
@@ -265,7 +314,7 @@ public class GravitySimulator : UdonSharpBehaviour
         double cx = 0, cy = 0, cz = 0;
         double mx = 0, my = 0, mz = 0;
 
-        int currentMaxBodies = ctrlPanel.activeMaxBodies;
+        int currentMaxBodies = Mathf.Clamp(ctrlPanel.activeMaxBodies, 2, 65536);
         for (int i = 0; i < currentMaxBodies; i++)
         {
             float mass = _posData[i].a;
@@ -300,14 +349,16 @@ public class GravitySimulator : UdonSharpBehaviour
     private void ProcessSnapshot()
     {
         _snapshotActiveCount = 0;
-        int currentMaxBodies = ctrlPanel.activeMaxBodies;
+        int currentMaxBodies = Mathf.Clamp(ctrlPanel.activeMaxBodies, 2, 65536);
 
         for (int i = 0; i < currentMaxBodies; i++)
         {
             if (IsBodyActive(i))
             {
                 _snapshotPosBuffer[_snapshotActiveCount] = _posData[i];
-                _snapshotVelBuffer[_snapshotActiveCount] = _velData[i];
+                Color stableVelocity = _velData[i];
+                stableVelocity.a = 0f;
+                _snapshotVelBuffer[_snapshotActiveCount] = stableVelocity;
                 _snapshotActiveCount++;
             }
         }
@@ -319,7 +370,13 @@ public class GravitySimulator : UdonSharpBehaviour
     public void ApplyDownloadedSnapshot(int bodyCount, Color[] posBuffer, Color[] velBuffer)
     {
         isPaused = true;
-        _hasRunInitialStep = false;
+        int configuredMaxBodies = Mathf.Clamp(ctrlPanel.activeMaxBodies, 2, 65536);
+        int availableBodies = 0;
+        if (posBuffer != null && velBuffer != null)
+        {
+            availableBodies = Mathf.Min(posBuffer.Length, velBuffer.Length);
+        }
+        int safeBodyCount = Mathf.Clamp(bodyCount, 0, Mathf.Min(configuredMaxBodies, availableBodies));
         
         Texture2D posTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
         Texture2D velTex = new Texture2D(256, 256, TextureFormat.RGBAFloat, false);
@@ -332,10 +389,12 @@ public class GravitySimulator : UdonSharpBehaviour
 
         for (int i = 0; i < 65536; i++)
         {
-            if (i < bodyCount)
+            if (i < safeBodyCount)
             {
                 fullPos[i] = posBuffer[i];
-                fullVel[i] = velBuffer[i];
+                Color stableVelocity = velBuffer[i];
+                stableVelocity.a = 0f;
+                fullVel[i] = stableVelocity;
             }
             else
             {
@@ -376,16 +435,35 @@ public class GravitySimulator : UdonSharpBehaviour
         VRCShader.SetGlobalTexture(_idPosMassPrev, posMassA);
         VRCShader.SetGlobalTexture(_idVelMisc, velMiscA);
         VRCShader.SetGlobalTexture(_idEventData, eventDataA);
+        VRCShader.SetGlobalTexture(_idEventMeta, eventDataB);
+        VRCShader.SetGlobalFloat(_idMaxBodies, configuredMaxBodies);
+        VRCShader.SetGlobalFloat(_idInitialActiveBodies, safeBodyCount);
         
         _currentPhase = 1;
         _currentBatch = 0;
+        _cycleCount = 0;
+        _frameCount = 0;
+        _timeSinceLastUpdate = 0f;
+        _previousTickTime = 0.05f;
+        _physicsTickTime = 0.05f;
+        _readBackState = 0;
+        _readBackTarget = 0;
+        _trailOffsetPending = false;
+        _trailOffsetWaitFrames = 0;
+        _snapshotRequested = false;
+        _snapshotReadbackNextFrame = false;
+        _hasRunInitialStep = true;
+        _actualBatchCount = ctrlPanel.activeBatchCount <= 0
+            ? 1
+            : Mathf.Clamp(ctrlPanel.activeBatchCount, 1, 64);
+        _pendingBatchCount = _actualBatchCount;
         
         syncManager.OnApplySnapshotComplete();
     }
 
     void Update()
     {
-        int currentMaxBodies = ctrlPanel.activeMaxBodies;
+        int currentMaxBodies = Mathf.Clamp(ctrlPanel.activeMaxBodies, 2, 65536);
         VRCShader.SetGlobalFloat(_idMaxBodies, currentMaxBodies);
 
         CustomRenderTexture currPosMass = _posMassIsA ? posMassA : posMassB;
@@ -406,21 +484,62 @@ public class GravitySimulator : UdonSharpBehaviour
             _posMassIsA = !_posMassIsA;
             _velMiscIsA = !_velMiscIsA;
 
+            // CRT Update is submitted asynchronously. Keep the old textures
+            // bound as shader inputs for the rest of this frame; rebinding the
+            // destinations here can turn the queued pass into undefined
+            // read/write feedback and clear every body's mass channel.
+            _trailOffsetPending = false;
+            _trailOffsetWaitFrames = -1;
             _readBackTarget = 4;
             return;
         }
 
         if (_readBackTarget == 4)
         {
+            CustomRenderTexture renderCurr = _posMassIsA ? posMassA : posMassB;
+            CustomRenderTexture renderVel = _velMiscIsA ? velMiscA : velMiscB;
+
+            // Expose the shifted front buffers before TrailManager runs. This
+            // also keeps body rendering coherent while waiting for its update.
+            VRCShader.SetGlobalTexture(_idPosMass, renderCurr);
+            VRCShader.SetGlobalTexture(_idPosMassPrev, renderCurr);
+            VRCShader.SetGlobalTexture(_idVelMisc, renderVel);
+
+            // This is the first frame after submitting the offset passes, so
+            // their destinations are now safe to expose. Only now may trail
+            // history consume the same coordinate-system shift.
+            if (_trailOffsetWaitFrames < 0)
+            {
+                _trailOffsetPending = syncManager != null && syncManager.trailManager != null;
+                _trailOffsetWaitFrames = 0;
+                return;
+            }
+
+            // TrailManager updates while the simulation is paused and consumes
+            // the same offset once. Allow for either Udon Update ordering.
+            if (_trailOffsetPending && _trailOffsetWaitFrames < 2)
+            {
+                _trailOffsetWaitFrames++;
+                return;
+            }
+
+            _trailOffsetPending = false;
             VRCShader.SetGlobalFloat(_idApplyOffset, 0.0f);
 
-            // Force rendering to use the new textures immediately
-            CustomRenderTexture renderCurr = _posMassIsA ? posMassA : posMassB;
-            VRCShader.SetGlobalTexture(_idPosMass, renderCurr);
-            VRCShader.SetGlobalTexture(_idPosMassPrev, renderCurr); // No interpolation across the teleport
-            VRCShader.SetGlobalTexture(_idVelMisc, _velMiscIsA ? velMiscA : velMiscB);
+            // Recenter is a teleport. Synchronize both ping-pong sides so the
+            // next normal frame cannot interpolate back toward unshifted data.
+            VRCGraphics.Blit(renderCurr, nextPosMass);
+            VRCGraphics.Blit(renderVel, nextVelMisc);
 
             _readBackTarget = 0;
+            return;
+        }
+
+        // CRT writes are queued. Waiting one Unity frame after the safe cycle
+        // boundary guarantees that readback sees the completed PosMass update.
+        if (_snapshotReadbackNextFrame)
+        {
+            BeginSnapshotReadback();
             return;
         }
 
@@ -429,25 +548,45 @@ public class GravitySimulator : UdonSharpBehaviour
 
         _timeSinceLastUpdate += Time.deltaTime;
         _frameCount++;
-        int framesSinceUpdate = _currentPhase == 1 ? _currentBatch + 1 : _actualBatchCount + 1;
-        float ratio = (float)framesSinceUpdate / (_actualBatchCount + 1);
-        // VRCShader.SetGlobalFloat(_idInterpolationRatio, Mathf.Clamp01(ratio));
 
         AdjustBatchCount();
 
 
-        // EventData 不再需要双缓冲，总是使用 A
-        CustomRenderTexture currEventData = eventDataA;
-        CustomRenderTexture nextEventData = eventDataA;
+        // EventData A stores numeric loss; EventData B stores matching metadata.
+        if (_currentPhase == 1 && _currentBatch == 0)
+        {
+            // Freeze the partition for a complete cycle. Mid-cycle changes
+            // otherwise overlap or skip body-ID ranges.
+            _actualBatchCount = Mathf.Clamp(_pendingBatchCount, 1, currentMaxBodies);
+        }
+
+        // Every cycle uses B velocity frames plus one terminal frame. On even
+        // cycles that terminal frame captures events and advances positions;
+        // the even position pass does not consume the freshly captured events.
+        int interpolationFrameCount = _actualBatchCount + 1;
+        int interpolationFrame = _currentPhase == 1
+            ? _currentBatch + 1
+            : _actualBatchCount + 1;
+        if (_currentPhase == 1 && _currentBatch == 0)
+        {
+            // _previousTickTime is the accumulated wall time of one complete
+            // batch cycle, including its terminal position pass. Every batch
+            // must use this same whole-cycle dt; treating Time.deltaTime as the
+            // physics step makes the result depend on the selected batch count.
+            _physicsTickTime = Mathf.Max(0.0001f, _previousTickTime);
+        }
+        float ratio = (float)interpolationFrame / interpolationFrameCount;
+        VRCShader.SetGlobalFloat(_idInterpolationRatio, Mathf.Clamp01(ratio));
 
         // Render Bindings
         VRCShader.SetGlobalTexture(_idPosMass, currPosMass);
         VRCShader.SetGlobalTexture(_idPosMassPrev, nextPosMass);
 
         VRCShader.SetGlobalTexture(_idVelMisc, currVelMisc);
-        VRCShader.SetGlobalTexture(_idEventData, currEventData);
+        VRCShader.SetGlobalTexture(_idEventData, eventDataA);
+        VRCShader.SetGlobalTexture(_idEventMeta, eventDataB);
 
-        VRCShader.SetGlobalFloat(_idDeltaTime, _previousTickTime > 0.0001f ? _previousTickTime : 0.02f);
+        VRCShader.SetGlobalFloat(_idDeltaTime, _physicsTickTime);
         VRCShader.SetGlobalFloat(_idSimSpeed, ctrlPanel.activeSimSpeed);
         VRCShader.SetGlobalFloat(_idMaxStep, ctrlPanel.activeMaxStep / 1000.0f);
         VRCShader.SetGlobalFloat(_idFrame, _frameCount);
@@ -478,30 +617,41 @@ public class GravitySimulator : UdonSharpBehaviour
         }
         else if (_currentPhase == 2)
         {
-            // Inputs for CRT Updates
-            // Globals for PosMass, VelMisc, EventData are already set above
-            VRCShader.SetGlobalTexture(_idEventDataNext, nextEventData);
-            VRCShader.SetGlobalTexture(_idPosMassNext, nextPosMass);
-
-            // Queue Updates
-            // EventData 只在偶数帧（刚产生事件后）更新，保留数据给奇数帧（重生）和下一个偶数帧（死亡统计）读取
+            // Capture events after the even interaction cycle and keep that
+            // generation unchanged until the following odd respawn cycle ends.
+            // Position can be submitted in the same frame because the even
+            // position pass does not read EventData/EventMeta.
             if (_cycleCount % 2 == 0)
             {
-                nextEventData.Update();
+                eventDataA.Update();
+                eventDataB.Update();
             }
-            nextPosMass.Update();
 
-            _posMassIsA = !_posMassIsA;
-
-            _currentPhase = 1;
-            _currentBatch = 0;
-            _cycleCount++;
-            _previousTickTime = _timeSinceLastUpdate;
-            _timeSinceLastUpdate = 0;
+            CompletePositionPhase(nextPosMass);
         }
 
-        if (isDebug)
+        if (isDebug && !_snapshotRequested)
         {
+            isPaused = true;
+        }
+    }
+
+    private void CompletePositionPhase(CustomRenderTexture nextPosMass)
+    {
+        nextPosMass.Update();
+        _posMassIsA = !_posMassIsA;
+
+        int completedCycle = _cycleCount;
+        _currentPhase = 1;
+        _currentBatch = 0;
+        _cycleCount++;
+        _previousTickTime = _timeSinceLastUpdate;
+        _timeSinceLastUpdate = 0f;
+
+        if (_snapshotRequested && (completedCycle % 2 == 1))
+        {
+            _snapshotRequested = false;
+            _snapshotReadbackNextFrame = true;
             isPaused = true;
         }
     }
@@ -521,7 +671,7 @@ public class GravitySimulator : UdonSharpBehaviour
                 _slowFrameCount++;
                 if (_slowFrameCount >= 5)
                 {
-                    _actualBatchCount = Mathf.Clamp(_actualBatchCount + 1, 1, 256);
+                    _pendingBatchCount = Mathf.Clamp(_pendingBatchCount + 1, 1, 256);
                     _slowFrameCount = -5;
                 }
             }
@@ -532,13 +682,23 @@ public class GravitySimulator : UdonSharpBehaviour
         }
         else
         {
-            _actualBatchCount = Mathf.Clamp(currentBatchCount, 1, 64);
+            _pendingBatchCount = Mathf.Clamp(currentBatchCount, 1, 64);
             _slowFrameCount = 0;
         }
     }
 
-    public float GetPhysicsStep() => _previousTickTime;
+    public float GetPhysicsStep() => Mathf.Min(
+        _physicsTickTime * ctrlPanel.activeSimSpeed,
+        ctrlPanel.activeMaxStep / 1000.0f);
     public int GetCurrentBatch() => _currentBatch;
     public int GetTotalBatches() => _actualBatchCount;
     public string GetCurrentCRT() => _posMassIsA ? "A->B" : "B->A";
+    public CustomRenderTexture GetCurrentPosMass() => _posMassIsA ? posMassA : posMassB;
+
+    public bool ConsumeRecenterTrailOffset()
+    {
+        if (!_trailOffsetPending) return false;
+        _trailOffsetPending = false;
+        return true;
+    }
 }

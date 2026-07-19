@@ -429,16 +429,35 @@ namespace network
 
             if (channel.phase == 1) // Sending
             {
+                int advertisedTotal = channel.totalSize;
+                if (advertisedTotal <= 0 || advertisedTotal > 65536)
+                {
+                    CancelReceive("快照大小无效");
+                    return;
+                }
+
+                if (_receiveTotalSize != advertisedTotal)
+                {
+                    CancelReceive("快照元数据不一致");
+                    return;
+                }
+
                 int chunkIndex = channel.currentChunk;
-                if (chunkIndex > _receiveCurrentChunk)
+                int expectedChunks = (advertisedTotal + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                if (chunkIndex == _receiveCurrentChunk + 1 && chunkIndex >= 0 && chunkIndex < expectedChunks)
                 {
                     // 接收新 chunk
                     _receiveCurrentChunk = chunkIndex;
                     _lastReceiveTime = Time.time;
-                    _receiveTotalSize = channel.totalSize;
-
                     int startIndex = chunkIndex * CHUNK_SIZE;
                     int count = Mathf.Min(CHUNK_SIZE, _receiveTotalSize - startIndex);
+
+                    if (channel.chunkPosData == null || channel.chunkVelData == null ||
+                        channel.chunkPosData.Length < count || channel.chunkVelData.Length < count)
+                    {
+                        CancelReceive("快照分块无效");
+                        return;
+                    }
 
                     for (int i = 0; i < count; i++)
                     {
@@ -509,6 +528,12 @@ namespace network
             PlayerState targetState = GetPlayerStateByPlayerId(targetPlayerId);
             if (targetState == null || !targetState.hasSnapshot) return;
 
+            if (targetState.snapshotSize <= 0 || targetState.snapshotSize > 65536)
+            {
+                if (snapshotStatusText != null) snapshotStatusText.text = "快照大小无效";
+                return;
+            }
+
             PlayerState localState = GetLocalPlayerState();
             if (localState == null) return;
 
@@ -559,6 +584,12 @@ namespace network
 
         private void ApplySnapshotSettings(int maxBodies, float gravConst)
         {
+            maxBodies = Mathf.Clamp(maxBodies, 2, 65536);
+            if (!(Mathf.Abs(gravConst) <= 1000000.0f))
+            {
+                gravConst = simulator.ctrlPanel.activeGravConst;
+            }
+
             simulator.ctrlPanel.activeMaxBodies = maxBodies;
             simulator.ctrlPanel.activeGravConst = gravConst;
             VRCShader.SetGlobalFloat(VRCShader.PropertyToID("_Udon_GravitationalConstant"), gravConst);

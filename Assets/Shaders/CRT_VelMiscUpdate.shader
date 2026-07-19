@@ -57,13 +57,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                 float max_mass_absorbed = -1.0;
                 float mass_settle_mass = mass;
 
-                // 死亡统计数据
-                float total_dead = 0.0;
-                float total_mass_loss = 0.0;
-                float min_score = 99999999.0;
-                int selected_target = -1;
                 uint seed = (uint)(_Udon_Cycle * 13.0 + id * 17.0);
-                float3 random_pos = ComputeSpawnPosition(seed, _Udon_SpawnRadius);
 
                 // 物理数据
                 float3 total_force = float3(0, 0, 0);
@@ -89,79 +83,6 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     {
                         current_data = max(0.0, current_data - 1.0);
                     }
-                    // 重生逻辑 奇数物理帧
-                    // 此时死亡统计完成，事件产生但未结算
-                    if (fmod(_Udon_Cycle, 2) > 0.5 && current_event == EVENT_DEAD)
-                    {
-                        // 直接从 vel 里读取上一帧最终累加的统计数据
-                        float final_total_mass_loss = vel.y;
-                        float final_total_dead = vel.z;
-                        int final_selected_target = (int)current_data;
-
-                        float avg_frag_mass = max(0.1, min(_Udon_FragmentSizeRange.x, _Udon_FragmentSizeRange.y));
-                        float prob = final_total_mass_loss / (avg_frag_mass * max(1.0, final_total_dead));
-                        float rand_val = hash(seed + 123u);
-                        // 没选到
-                        if (final_selected_target == -1 || rand_val >= prob)
-                        {
-                            return float4(0, 0, 0, EncodeEvent(EVENT_DEAD, 0.0));
-                        }
-
-                        float2 target_uv = GetUVFromID(final_selected_target);
-                        float4 target_event_data = tex2Dlod(_Udon_EventData, float4(target_uv, 0, 0));
-                        float3 target_dir = target_event_data.xyz;
-
-                        float4 target_vel_misc = tex2Dlod(_Udon_VelMisc, float4(target_uv, 0, 0));
-                        float4 target_pos_mass = tex2Dlod(_Udon_PosMass, float4(target_uv, 0, 0));
-                        int target_event;
-                        float target_data;
-                        DecodeEvent(target_vel_misc.w, target_event, target_data);
-
-                        float3 new_vel = float3(0, 0, 0);
-                        float target_radius = GetRadius(target_pos_mass.w, _Udon_InnerDensity,
-                                                        _Udon_OuterDensity, _Udon_InnerRatio);
-
-                        float mass_loss = target_event_data.w;
-                        float ring_radius = length(target_dir);
-                        float3 n_dir = ring_radius > 0.0001 ? target_dir / ring_radius : float3(0, 1, 0);
-
-                        // 撕裂
-                        if (target_event == EVENT_TEAR)
-                        {
-                            float esc_speed = sqrt(
-                                2.0 * _Udon_GravitationalConstant * target_pos_mass.w / max(0.1, target_radius));
-                            new_vel = target_vel_misc.xyz + n_dir * esc_speed;
-                        }
-                        // 碰撞和吞噬
-                        else if (target_event == EVENT_SHATTER || (target_event == EVENT_SWALLOWED && target_data > -
-                            0.5))
-                        {
-                            uint seed_frame = (uint)(_Udon_Frame * 13.0 + id * 17.0);
-                            float actual_ring_radius = max(0.1, ring_radius) * (0.8 + 0.4 * hash(seed_frame + 5u));
-
-                            float3 up = abs(n_dir.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
-                            float3 tangent = normalize(cross(n_dir, up));
-                            float3 bitangent = cross(n_dir, tangent);
-
-                            float angle = hash(seed_frame + 4u) * TWO_PI;
-                            float3 ring_offset = (tangent * cos(angle) + bitangent * sin(angle)) * actual_ring_radius;
-
-                            if (target_event == EVENT_SWALLOWED)
-                            {
-                                float3 spread_dir = length(ring_offset) > 0.0001 ? normalize(ring_offset) : float3(0, 1, 0);
-                                float3 spawn_relative_dir = normalize(n_dir + spread_dir * 1.5);
-                                float esc_speed = sqrt(2.0 * _Udon_GravitationalConstant * target_pos_mass.w / max(0.1, target_radius)) * 2.0;
-                                new_vel = target_vel_misc.xyz + spawn_relative_dir * esc_speed * 1.2;
-                            }
-                            else
-                            {
-                                float3 outward_dir = length(ring_offset) > 0.0001 ? normalize(ring_offset) : n_dir;
-                                float esc_speed = sqrt(2.0 * _Udon_GravitationalConstant * target_pos_mass.w / max(0.1, target_radius)) * 1.5;
-                                new_vel = outward_dir * esc_speed + target_vel_misc.xyz;
-                            }
-                        }
-                        return float4(new_vel, EncodeEvent(EVENT_RESPAWN, (float)final_selected_target));
-                    }
                 }
 
                 // 下一事件
@@ -173,41 +94,179 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     mass_settle_mass = current_data;
                 }
 
-                // 第2-n批
-                if (_Udon_StartID > 0.5)
+                // DEAD 槽在事件产生后的奇数周期直接消费同一代 EventData。
+                // mass > 0 表示本周期刚刚进入 DEAD，必须等 PosMass 清零后再作为空闲槽使用。
+                if (current_event == EVENT_DEAD)
                 {
-                    // 事件与死亡统计 偶数帧计算
+                    if (mass > 0.0001)
+                    {
+                        return old_vel_misc;
+                    }
+
+                    // 偶数周期只负责产生事件；清空旧统计，避免跨代消费。
                     if (fmod(_Udon_Cycle, 2) < 0.5)
+                    {
+                        return float4(0, 0, 0, EncodeEvent(EVENT_DEAD, 0.0));
+                    }
+
+                    float min_score = 99999999.0;
+                    float total_mass_loss = 0.0;
+                    float total_dead = 1.0; // 包含自身；循环会跳过自身。
+                    int selected_target = -1;
+
+                    if (_Udon_StartID > 0.5)
                     {
                         min_score = vel.x;
                         total_mass_loss = vel.y;
                         total_dead = vel.z;
-                        selected_target = (int)current_data;
+                        // Event payload 0 is the stable sentinel for "no source".
+                        // Encoding raw -1 as a float loses low mantissa bits and
+                        // truncates back to 0 on some shader targets.
+                        selected_target = (int)(current_data + 0.5) - 1;
+                    }
 
-                        // 恢复优先级比较器
-                        if (current_event == EVENT_SWALLOWED)
-                        {
-                            float2 prev_uv = GetUVFromID((uint)current_data);
-                            max_mass_swallowed = tex2Dlod(_Udon_PosMass, float4(prev_uv, 0, 0)).w;
-                        }
-                        else if (current_event == EVENT_ABSORBED)
-                        {
-                            float2 prev_uv = GetUVFromID((uint)current_data);
-                            max_mass_absorbed = tex2Dlod(_Udon_PosMass, float4(prev_uv, 0, 0)).w;
-                        }
-                    }
-                    else
+                    float3 random_pos = ComputeSpawnPosition(seed, _Udon_SpawnRadius);
+                    int dead_loop_start = (int)_Udon_StartID;
+                    int dead_loop_end = min((int)_Udon_EndID, (int)_Udon_MaxBodies - 1);
+
+                    for (int dead_i = dead_loop_start; dead_i <= dead_loop_end; dead_i++)
                     {
-                        
+                        if (dead_i == id) continue;
+
+                        float2 source_uv = GetUVFromID(dead_i);
+                        float4 source_pos_mass = tex2Dlod(_Udon_PosMass, float4(source_uv, 0, 0));
+                        if (source_pos_mass.w <= 0.0)
+                        {
+                            total_dead += 1.0;
+                        }
+
+                        float4 source_event_data = tex2Dlod(_Udon_EventData, float4(source_uv, 0, 0));
+                        float4 source_event_meta = tex2Dlod(_Udon_EventMeta, float4(source_uv, 0, 0));
+                        int source_event = (int)(source_event_meta.x + 0.5);
+                        float abs_loss = abs(source_event_data.w);
+
+                        bool valid_source = source_event_meta.z > 0.5 && abs_loss > 0.0001 &&
+                            (source_event == EVENT_SHATTER || source_event == EVENT_TEAR ||
+                             source_event == EVENT_SWALLOWED);
+                        if (!valid_source) continue;
+
+                        float3 source_pos = source_pos_mass.xyz;
+                        if (source_event == EVENT_SWALLOWED)
+                        {
+                            int absorber_id = (int)(source_event_meta.y + 0.5);
+                            if (absorber_id >= 0 && absorber_id < (int)_Udon_MaxBodies)
+                            {
+                                float2 absorber_uv = GetUVFromID(absorber_id);
+                                source_pos = tex2Dlod(_Udon_PosMass, float4(absorber_uv, 0, 0)).xyz;
+                            }
+                        }
+
+                        total_mass_loss += abs_loss;
+                        float3 source_diff = source_pos - random_pos;
+                        float score = dot(source_diff, source_diff) / abs_loss;
+                        if (score < min_score)
+                        {
+                            min_score = score;
+                            selected_target = dead_i;
+                        }
                     }
+
+                    if (_Udon_EndID >= _Udon_MaxBodies - 1.5)
+                    {
+                        // 有意使用最小碎片质量：这是对有限槽位、逃逸销毁和随机采样造成净损失的经验补偿。
+                        float probability_mass = max(0.1,
+                            min(_Udon_FragmentSizeRange.x, _Udon_FragmentSizeRange.y));
+                        float probability = saturate(total_mass_loss /
+                            (probability_mass * max(1.0, total_dead)));
+
+                        if (selected_target < 0 || hash(seed + 123u) >= probability)
+                        {
+                            return float4(0, 0, 0, EncodeEvent(EVENT_DEAD, 0.0));
+                        }
+
+                        float2 source_uv = GetUVFromID(selected_target);
+                        float4 source_event_data = tex2Dlod(_Udon_EventData, float4(source_uv, 0, 0));
+                        float4 source_event_meta = tex2Dlod(_Udon_EventMeta, float4(source_uv, 0, 0));
+                        int source_event = (int)(source_event_meta.x + 0.5);
+
+                        int anchor_id = selected_target;
+                        if (source_event == EVENT_SWALLOWED)
+                        {
+                            anchor_id = (int)(source_event_meta.y + 0.5);
+                        }
+                        anchor_id = clamp(anchor_id, 0, (int)_Udon_MaxBodies - 1);
+
+                        float2 anchor_uv = GetUVFromID(anchor_id);
+                        float4 anchor_pos_mass = tex2Dlod(_Udon_PosMass, float4(anchor_uv, 0, 0));
+                        float4 anchor_vel_misc = tex2Dlod(_Udon_VelMisc, float4(anchor_uv, 0, 0));
+                        float anchor_radius = GetRadius(anchor_pos_mass.w, _Udon_InnerDensity,
+                                                       _Udon_OuterDensity, _Udon_InnerRatio);
+
+                        float3 source_dir = source_event_data.xyz;
+                        float ring_radius = length(source_dir);
+                        float3 n_dir = ring_radius > 0.0001 ? source_dir / ring_radius : float3(0, 1, 0);
+                        float3 new_vel;
+
+                        if (source_event == EVENT_TEAR)
+                        {
+                            float esc_speed = sqrt(2.0 * _Udon_GravitationalConstant * anchor_pos_mass.w /
+                                                   max(0.1, anchor_radius));
+                            new_vel = anchor_vel_misc.xyz + n_dir * esc_speed;
+                        }
+                        else
+                        {
+                            uint fragment_seed = (uint)(_Udon_Frame * 13.0 + id * 17.0);
+                            float3 up = abs(n_dir.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
+                            float3 tangent = normalize(cross(n_dir, up));
+                            float3 bitangent = cross(n_dir, tangent);
+                            float angle = hash(fragment_seed + 4u) * TWO_PI;
+                            float3 ring_dir = tangent * cos(angle) + bitangent * sin(angle);
+                            float actual_ring_radius = max(0.1, ring_radius) *
+                                (0.8 + 0.4 * hash(fragment_seed + 5u));
+
+                            // 球面外法线只用作抬升分量；叠加沿碰撞面向环外扩散的分量，
+                            // 使碎片形成环形喷射锥，而不是沿球面法线集中发射。
+                            float surface_radius = max(0.0001, anchor_radius);
+                            float surface_ring_radius = min(actual_ring_radius, surface_radius * 0.95);
+                            float axial_offset = sqrt(max(0.0,
+                                surface_radius * surface_radius - surface_ring_radius * surface_ring_radius));
+                            float3 surface_normal = normalize(
+                                n_dir * axial_offset + ring_dir * surface_ring_radius);
+                            float lift_weight = lerp(0.45, 0.75, hash(fragment_seed + 8u));
+                            float lateral_weight = lerp(0.90, 1.40, hash(fragment_seed + 9u));
+                            float3 outward_dir = normalize(
+                                surface_normal * lift_weight + ring_dir * lateral_weight);
+                            // 保持在局部逃逸速度以下：碎片会先喷出，然后大部分回落或留在附近。
+                            float speed_random = hash(fragment_seed + 7u);
+                            float esc_multiplier = source_event == EVENT_SWALLOWED
+                                ? lerp(0.8, 1.2, speed_random)
+                                : lerp(0.6, 1.0, speed_random);
+                            float esc_speed = sqrt(2.0 * _Udon_GravitationalConstant * anchor_pos_mass.w /
+                                                   max(0.1, anchor_radius));
+                            new_vel = anchor_vel_misc.xyz + outward_dir * esc_speed * esc_multiplier;
+                        }
+
+                        return float4(new_vel, EncodeEvent(EVENT_RESPAWN, (float)selected_target));
+                    }
+
+                    return float4(min_score, total_mass_loss, total_dead,
+                                  EncodeEvent(EVENT_DEAD, (float)(selected_target + 1)));
                 }
 
-                // 第1-n批
-                // 死体特殊结算与跳过后续物理
-                if (fmod(_Udon_Cycle, 2) > 0.5 && current_event == EVENT_DEAD)
+                // 第2-n批
+                if (_Udon_StartID > 0.5)
                 {
-                    // 奇数帧 死体直接跳过
-                    return old_vel_misc;
+                    // 恢复跨 batch 的事件优先级比较器。
+                    if (current_event == EVENT_SWALLOWED)
+                    {
+                        float2 prev_uv = GetUVFromID((uint)current_data);
+                        max_mass_swallowed = tex2Dlod(_Udon_PosMass, float4(prev_uv, 0, 0)).w;
+                    }
+                    else if (current_event == EVENT_ABSORBED)
+                    {
+                        float2 prev_uv = GetUVFromID((uint)current_data);
+                        max_mass_absorbed = tex2Dlod(_Udon_PosMass, float4(prev_uv, 0, 0)).w;
+                    }
                 }
                 int active_loop_start = (int)_Udon_StartID;
                 int active_loop_end = min((int)_Udon_EndID, (int)_Udon_MaxBodies - 1);
@@ -224,36 +283,6 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
 
                     float4 other_pos_mass = tex2Dlod(_Udon_PosMass, float4(other_uv, 0, 0));
                     float other_mass = other_pos_mass.w;
-
-
-                    // 死亡统计 偶数帧进行
-                    if (fmod(_Udon_Cycle, 2) < 0.5 && current_event == EVENT_DEAD)
-                    {
-                        if (other_event == EVENT_DEAD)
-                        {
-                            total_dead += 1.0;
-                        }
-
-                        float4 other_event_data = tex2Dlod(_Udon_EventData, float4(other_uv, 0, 0));
-                        float loss = other_event_data.w;
-
-                        if (abs(loss) > 0.0)
-                        {
-                            float abs_loss = abs(loss);
-                            float3 diff = other_pos_mass.xyz - random_pos;
-                            float dist_sq = dot(diff, diff);
-                            total_mass_loss += abs_loss;
-                            float score = dist_sq / abs_loss;
-                            if (score < min_score)
-                            {
-                                min_score = score;
-                                selected_target = i;
-                            }
-                        }
-                    }
-
-                    // 死体不参与物理和事件生成，跳过后续所有活跃天体逻辑
-                    if (current_event == EVENT_DEAD) continue;
 
                     // 被吞噬/被吸收目标已死亡 → 本体也判死，不应该无限等待
                     if ((current_event == EVENT_SWALLOWED || current_event == EVENT_ABSORBED)
@@ -292,9 +321,11 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                         int iter_event = EVENT_NONE;
                         float iter_data = 0.0;
                         bool is_smaller = (mass < other_mass) || (mass == other_mass && id > i);
+                        float3 rel_vel = vel - other_vel_misc.xyz;
+                        float collision_dist = CalculateSweptClosestDistance(diff, rel_vel, dt);
 
-                        // 事件计算
-                        if (dist < sum_outer_radii)
+                        // 使用整个物理步内的最近距离，避免位置更新频率降低时穿透。
+                        if (collision_dist < sum_outer_radii)
                         {
                             if (mass < _Udon_MinInteractMass || other_mass < _Udon_MinInteractMass)
                             {
@@ -307,7 +338,7 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                             }
                             else
                             {
-                                if (dist < sum_inner_radii)
+                                if (collision_dist < sum_inner_radii)
                                 {
                                     // 相撞，内层吞并
                                     if (is_smaller)
@@ -319,12 +350,12 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                                 else
                                 {
                                     // 预测下一帧是否重叠
-                                    float3 rel_vel = vel - other_vel_misc.xyz;
                                     float3 next_diff = diff - rel_vel * dt;
                                     float next_dist = length(next_diff);
 
                                     // 双方都计算速度损失
-                                    float overlap_vol = CalculateOverlapVolume(my_radius, other_radius, dist);
+                                    float overlap_vol = CalculateOverlapVolume(
+                                        my_radius, other_radius, collision_dist);
                                     float overlap_mass = overlap_vol * _Udon_OuterDensity;
                                     float limit_rate = FRICTION_RATE_LIMIT; // 与吸收速率限制一致
                                     float max_coeff = other_mass / max(0.0001, mass + other_mass);
@@ -352,10 +383,12 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                                 }
                             }
                         }
-                        else if (dist < sum_outer_radii * ROCHE_LIMIT_FACTOR && mass >= _Udon_MinInteractMass &&
-                            other_mass >= _Udon_MinInteractMass)
+                        else if (mass >= _Udon_MinInteractMass && other_mass >= _Udon_MinInteractMass &&
+                            CalculateTidalStressRatio(mass, my_radius, other_mass, dist) >
+                                ROCHE_TIDAL_THRESHOLD)
                         {
-                            // 撕裂 如果超过洛希极限
+                            // 每个天体独立比较自身绑定力与对方产生的潮汐应力。
+                            // 质量接近时可以双向撕裂；小天体对巨大天体通常达不到阈值。
                             iter_event = EVENT_TEAR;
                             iter_data = (float)i;
                         }
@@ -469,13 +502,6 @@ Shader "re-Gravity/CRT_VelMiscUpdate"
                     }
                 }
                 
-                // 死亡统计结算 偶数帧进行
-                if (fmod(_Udon_Cycle, 2) < 0.5 && current_event == EVENT_DEAD)
-                {
-                    return float4(min_score, total_mass_loss, total_dead,
-                                  EncodeEvent(EVENT_DEAD, (float)selected_target));
-                }
-
                 // 结算物理
                 vel += total_force * dt + vel_drag;
 

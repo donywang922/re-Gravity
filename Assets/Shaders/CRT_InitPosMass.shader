@@ -23,6 +23,11 @@ Shader "re-Gravity/CRT_InitPosMass"
             float4 frag(v2f_init_customrendertexture IN) : SV_Target
             {
                 uint id = GetIDFromUV(IN.texcoord.xy);
+                if (id >= (uint)_Udon_InitialActiveBodies)
+                {
+                    return float4(0, 0, 0, 0);
+                }
+
                 uint seed = id * 10u + (uint)_Udon_RandomSeed;
 
                 // 立方根分布确保球体内体积均匀

@@ -22,8 +22,12 @@ Shader "re-Gravity/CRT_InitVelMisc"
             
             float4 frag(v2f_init_customrendertexture IN) : SV_Target
             {
-                // return float4(0, 0, 0, 0);
                 uint id = GetIDFromUV(IN.texcoord.xy);
+                if (id >= (uint)_Udon_InitialActiveBodies)
+                {
+                    return float4(0, 0, 0, EncodeEvent(EVENT_DEAD, 0.0));
+                }
+
                 uint seed = id * 10u + (uint)_Udon_RandomSeed;
 
                 // 与 CRT_InitPosMass 使用相同种子重建位置，以推导轨道切线方向

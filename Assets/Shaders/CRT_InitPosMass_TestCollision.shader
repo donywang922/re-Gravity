@@ -25,13 +25,11 @@ Shader "re-Gravity/CRT_InitPosMass_TestCollision"
                 if (id == 0u)
                 {
                     // 巨大天体位于原点
-                    return float4(0.0, 0.0, 0.0, 20000000.0);
+                    return float4(300.0, 0.0, 0.0, 10000000.0);
                 }
                 if (id == 1u)
                 {
-                    // 小天体位于 Z 轴远处
-                    float startZ = 500.0;
-                    return float4(0.0, startZ, 0.0, 100000.0);
+                    return float4(-200.0, 0.0, 0.0, 20000000.0);
                 }
 
                 // 其他天体质量为 0（死亡状态），并移到视野外防止渲染干扰

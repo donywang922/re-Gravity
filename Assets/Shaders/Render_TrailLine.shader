@@ -65,7 +65,19 @@ Shader "re-Gravity/Render_TrailLine"
 
                 float4 histData = tex2Dlod(_Udon_TrailHistory, float4(u, v_crt, 0, 0));
                 float3 worldPos = histData.xyz;
-                float mass = histData.w;
+
+                float bodyIdFloat = tex2Dlod(_Udon_Top64IDs, float4(v_crt, 0.5, 0, 0)).r;
+                if (bodyIdFloat < -0.5 || bodyIdFloat >= _Udon_MaxBodies - 0.5)
+                {
+                    o.pos = float4(0, 0, 0, 0);
+                    o.color = float4(0, 0, 0, 0);
+                    return o;
+                }
+
+                uint bodyId = (uint)(bodyIdFloat + 0.5);
+                float expectedIdentity = (float)bodyId + 1.0;
+                float2 bodyUV = GetUVFromID(bodyId);
+                float mass = tex2Dlod(_Udon_PosMass, float4(bodyUV, 0, 0)).w;
 
                 // 计算轨迹方向（当前点到下一个点）
                 float u_next = (min(255.0, v.uv2.y + 1.0) + 0.5) / (float)TRAIL_LINE_WIDTH;
@@ -79,7 +91,8 @@ Shader "re-Gravity/Render_TrailLine"
                 nextWorldPos.y += 1;
 
                 // 无效数据（当前/下一个像素为黑色）退化为零点
-                if (dot(histData, histData) < 0.001 || dot(nextHistData, nextHistData) < 0.001) {
+                if (mass <= 0.0 || abs(histData.w - expectedIdentity) > 0.25 ||
+                    abs(nextHistData.w - expectedIdentity) > 0.25) {
                     o.pos = float4(0,0,0,0);
                     o.color = float4(0,0,0,0);
                     return o;
@@ -93,8 +106,22 @@ Shader "re-Gravity/Render_TrailLine"
                 }
 
                 // Billboard: 用轨迹方向和视线方向叉积得到侧向
-                float3 viewDir = normalize(_WorldSpaceCameraPos - worldPos);
+                float3 viewVector = _WorldSpaceCameraPos - worldPos;
+                float viewLength = length(viewVector);
+                float3 viewDir = viewLength > 0.0001
+                    ? viewVector / viewLength
+                    : float3(0, 0, 1);
                 float3 right = cross(dir, viewDir);
+                float rightLength = length(right);
+                if (rightLength < 0.0001)
+                {
+                    float3 fallbackAxis = abs(dir.y) < 0.999
+                        ? float3(0, 1, 0)
+                        : float3(1, 0, 0);
+                    right = cross(dir, fallbackAxis);
+                    rightLength = length(right);
+                }
+                right /= max(0.0001, rightLength);
 
                 // 宽度改为恒定
                 // 保证至少在屏幕上有 1 像素宽度，但不能超过天体本身的粗细
@@ -112,9 +139,7 @@ Shader "re-Gravity/Render_TrailLine"
 
                 // 颜色：采样对应天体的颜色，透明度随深度衰减
                 float alpha = 1.0 - v.uv.x;
-                float bodyId = tex2Dlod(_Udon_Top64IDs, float4(v_crt, 0.5, 0, 0)).r;
-                float2 uvColor = GetUVFromID((uint)(bodyId + 0.5));
-                float3 bodyColor = tex2Dlod(_Udon_Color, float4(uvColor, 0, 0)).rgb;
+                float3 bodyColor = tex2Dlod(_Udon_Color, float4(bodyUV, 0, 0)).rgb;
 
                 o.color = float4(bodyColor, alpha * TRAIL_BASE_ALPHA);
                 return o;

@@ -76,13 +76,13 @@ Shader "re-Gravity/Render_BodyImpostor"
                     return o;
                 }
                 // --- 事件解码与可见性判定 ---
-                //TODO 刚复活的天体EVENT_RESPAWN是不显示且不插值的 (已修复: 提前判定)
+                // DEAD 槽尽早剔除；RESPAWN 会在下方按“复用槽位”单独插值。
                 float4 velMisc = tex2Dlod(_Udon_VelMisc, float4(v.uv2, 0, 0));
                 int eventType;
                 float eventData;
                 DecodeEvent(velMisc.w, eventType, eventData);
 
-                if (eventType == EVENT_DEAD )
+                if (eventType == EVENT_DEAD)
                 {
                     o.pos = float4(0, 0, 0, 0);
                     o.uv = v.uv;
@@ -96,8 +96,34 @@ Shader "re-Gravity/Render_BodyImpostor"
                 // --- 帧间插值 ---
                 float4 prevPosMass = tex2Dlod(_Udon_PosMass_Prev, float4(v.uv2, 0, 0));
                 float4 currPosMass = tex2Dlod(_Udon_PosMass, float4(v.uv2, 0, 0));
-                float mass = lerp(prevPosMass.w, currPosMass.w, _Udon_InterpolationRatio);
-                float3 worldPos = lerp(prevPosMass.xyz, currPosMass.xyz, _Udon_InterpolationRatio);
+
+                // 防止事件纹理与位置纹理切换边界上的空槽进入半径/朝向计算。
+                if (currPosMass.w <= 0.0)
+                {
+                    o.pos = float4(0, 0, 0, 0);
+                    o.uv = v.uv;
+                    o.viewPos = float3(0, 0, 0);
+                    o.viewCenter = float3(0, 0, 0);
+                    o.radius = 0;
+                    o.color = float4(0, 0, 0, 0);
+                    return o;
+                }
+
+                float interpolationRatio = saturate(_Udon_InterpolationRatio);
+                float mass = lerp(prevPosMass.w, currPosMass.w, interpolationRatio);
+                float3 worldPos = lerp(prevPosMass.xyz, currPosMass.xyz, interpolationRatio);
+
+                // DEAD 槽首次复用时，上一位置是零点而不是有效的物理历史。
+                // 碎片应在生成点原地长出，不能从世界原点插值过去。
+                bool isNewlyRespawned = eventType == EVENT_RESPAWN &&
+                    prevPosMass.w <= 0.0 && currPosMass.w > 0.0;
+                if (isNewlyRespawned)
+                {
+                    worldPos = currPosMass.xyz;
+                    mass = currPosMass.w * interpolationRatio;
+                }
+
+                float simulationDistance = length(worldPos);
 
                 // --- 缩放处理 ---
                 float scale = _Udon_SimScale > 0.00001 ? _Udon_SimScale : 1.0;
@@ -111,8 +137,14 @@ Shader "re-Gravity/Render_BodyImpostor"
                 o.viewCenter = viewCenter;
 
                 // 使 Quad 朝向相机位置 (Spherical Billboard)，修复 VR 边缘扁平拉伸
-                float3 forward = normalize(viewCenter);
-                float3 right = normalize(cross(forward, float3(0, 1, 0)));
+                float viewCenterLength = length(viewCenter);
+                float3 forward = viewCenterLength > 0.0001
+                    ? viewCenter / viewCenterLength
+                    : float3(0, 0, -1);
+                float3 referenceUp = abs(forward.y) < 0.999
+                    ? float3(0, 1, 0)
+                    : float3(1, 0, 0);
+                float3 right = normalize(cross(forward, referenceUp));
                 float3 up = cross(right, forward);
 
                 float3 viewPos = viewCenter + right * (v.vertex.x * radius * 2.0) + up * (v.vertex.y * radius * 2.0);
@@ -122,8 +154,7 @@ Shader "re-Gravity/Render_BodyImpostor"
 
                 // --- 颜色采样与距离衰减 ---
                 float3 baseColor = tex2Dlod(_Udon_Color, float4(v.uv2, 0, 0)).rgb;
-                float dist = length(worldPos); // 还原实际距离计算 fade
-                float fadeT = saturate((dist - _Udon_FadeStartDistance) /
+                float fadeT = saturate((simulationDistance - _Udon_FadeStartDistance) /
                     max(0.1, _Udon_SpawnRadius - _Udon_FadeStartDistance));
                 float fadeFactor = lerp(1.0, 0.5, fadeT);
 
@@ -178,7 +209,10 @@ Shader "re-Gravity/Render_BodyImpostor"
                 float z = sqrt(1.0 - r2);
 
                 // 覆写深度缓冲（沿视线方向凸出，修复边缘深度误差）
-                float3 forward = normalize(i.viewCenter);
+                float viewCenterLength = length(i.viewCenter);
+                float3 forward = viewCenterLength > 0.0001
+                    ? i.viewCenter / viewCenterLength
+                    : float3(0, 0, -1);
                 float3 sphereViewPos = i.viewPos - forward * (z * i.radius);
 
                 float4 clipPos = mul(UNITY_MATRIX_P, float4(sphereViewPos, 1.0));

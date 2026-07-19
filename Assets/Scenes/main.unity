@@ -20268,6 +20268,7 @@ MonoBehaviour:
   outerDensity: 1
   innerRatio: 0.5
   minInteractMass: 100
+  fragmentPoolRatio: 0.25
   fadeStartDistance: 250
   isPaused: 1
   isDebug: 0

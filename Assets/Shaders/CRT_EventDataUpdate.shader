@@ -76,9 +76,14 @@ Shader "re-Gravity/CRT_EventDataUpdate"
                         {
                             // 吞噬破碎：直接按小天体百分比质量计算，负数标记
                             mass_loss = -(my_mass * SHATTER_MASS_RATIO);
-                            // 吞噬时，方向取自身速度的反方向
-                            float3 my_vel = my_vel_misc.xyz;
-                            float3 swallow_dir = length(my_vel) > 0.001 ? normalize(-my_vel) : float3(0, 1, 0);
+                            // 吞噬时，使用相对冲击速度的反方向作为撞击面外法线
+                            float3 relative_vel = my_vel_misc.xyz - target_vel_misc.xyz;
+                            float3 separation_out = length(raw_dir) > 0.001
+                                ? normalize(-raw_dir)
+                                : float3(0, 1, 0);
+                            float3 swallow_dir = length(relative_vel) > 0.001
+                                ? normalize(-relative_vel)
+                                : separation_out;
                             // 环半径至多为目标大天体半径的一半
                             float ring_radius = min(my_radius, target_radius * 0.5);
                             dir = swallow_dir * ring_radius;
@@ -86,11 +91,16 @@ Shader "re-Gravity/CRT_EventDataUpdate"
                         else
                         {
                             // 擦过破碎：按重叠体积计算，负数标记
-                            float overlap_vol = CalculateOverlapVolume(my_radius, target_radius, dist);
+                            float3 relative_vel = my_vel_misc.xyz - target_vel_misc.xyz;
+                            float collision_dist = CalculateSweptClosestDistance(
+                                raw_dir, relative_vel, GetTimeStep());
+                            float overlap_vol = CalculateOverlapVolume(
+                                my_radius, target_radius, collision_dist);
                             mass_loss = -(overlap_vol * _Udon_OuterDensity);
                             
                             // 算出精确的圆环半径
-                            float x = (dist * dist - target_radius * target_radius + my_radius * my_radius) / max(0.0001, 2.0 * dist);
+                            float x = (collision_dist * collision_dist - target_radius * target_radius +
+                                my_radius * my_radius) / max(0.0001, 2.0 * collision_dist);
                             float ring_radius = 0.1;
                             if (x < my_radius)
                             {
@@ -103,8 +113,10 @@ Shader "re-Gravity/CRT_EventDataUpdate"
                     else if (my_event == EVENT_TEAR)
                     {
                         float dt = GetTimeStep();
-                        float roche_limit = (my_radius + target_radius) * ROCHE_LIMIT_FACTOR;
-                        float ratio = clamp(1.0 - dist / max(0.001, roche_limit), 0.0, 1.0);
+                        float tidal_ratio = CalculateTidalStressRatio(
+                            my_mass, my_radius, target_mass, dist);
+                        float ratio = saturate(
+                            (tidal_ratio - ROCHE_TIDAL_THRESHOLD) / ROCHE_TIDAL_THRESHOLD);
 
                         float my_loss_rate = min(ratio * 0.05 * my_mass, 400.0);
 

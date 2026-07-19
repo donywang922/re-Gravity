@@ -32,8 +32,8 @@
 // ---------------------------------------------------------------------------
 // 物理阈值
 // ---------------------------------------------------------------------------
-#define ROCHE_LIMIT_FACTOR   1.5   // 洛希极限 = 外径之和 × 此系数
-#define SHATTER_MASS_RATIO   0.9   // 吞噬破碎时，转化成碎片的质量比例
+#define ROCHE_TIDAL_THRESHOLD 0.14 // 流体洛希极限对应的潮汐力/自引力近似阈值
+#define SHATTER_MASS_RATIO   0.2   // 吞噬破碎时，转化成碎片的质量比例
 #define ABSORB_RATE_LIMIT    2.0   // 吸收速率限制，即每秒最多吸收目标自身质量的倍数
 #define FRICTION_RATE_LIMIT  1.0   // 摩擦阻力限制，与吸收速率一致
 
@@ -103,6 +103,7 @@ uniform float2 _Udon_InitialBodySizeRange; // 初始天体尺寸范围
 uniform float _Udon_StartID;
 uniform float _Udon_EndID;
 uniform float _Udon_MaxBodies;
+uniform float _Udon_InitialActiveBodies;
 
 // 主状态纹理（绑定到当前帧数据，用于渲染）
 uniform sampler2D _Udon_PosMass;
@@ -110,12 +111,10 @@ uniform float4    _Udon_PosMass_TexelSize;
 uniform sampler2D _Udon_VelMisc;
 
 uniform sampler2D _Udon_EventData;
+// EventMeta: float4(eventType, relatedBodyID, validFlag, reserved)
+// It is kept separate from EventData so mass loss remains an ordinary float.
+uniform sampler2D _Udon_EventMeta;
 uniform sampler2D _Udon_Color;
-
-// 双缓冲纹理（CRT 更新 Pass 使用）
-uniform sampler2D _Udon_PosMass_Next;
-uniform sampler2D _Udon_EventData_Next;
-
 
 // ===========================================================================
 // 工具函数
@@ -169,6 +168,15 @@ inline float GetInnerRadius(float r, float innerRatio) {
     return r * innerRatio;
 }
 
+// 对方在本天体尺度上产生的潮汐差分加速度 / 本天体表面自引力。
+// G 在比值中抵消：2 * (M_other / M_self) * (R_self / distance)^3。
+inline float CalculateTidalStressRatio(float bodyMass, float bodyRadius, float perturberMass, float distance) {
+    float safeDistance = max(0.1, distance);
+    float radiusRatio = bodyRadius / safeDistance;
+    return 2.0 * max(0.0, perturberMass) / max(0.0001, bodyMass)
+        * radiusRatio * radiusRatio * radiusRatio;
+}
+
 // ---------------------------------------------------------------------------
 // 物理步长 — 取 dt × simSpeed 与 maxStep 的较小值
 // ---------------------------------------------------------------------------
@@ -210,6 +218,17 @@ inline float CalculateOverlapVolume(float r1, float r2, float d) {
     // 标准球冠相交体积公式
     float v = PI * ((r1 + r2 - d) * (r1 + r2 - d)) * (d * d + 2.0 * d * (r1 + r2) - 3.0 * (r1 - r2) * (r1 - r2)) / (12.0 * d);
     return max(0.0, v);
+}
+
+// 两天体在一个完整物理步内的最小球心距离。
+// separation = otherPos - myPos，relativeVelocity = myVel - otherVel。
+inline float CalculateSweptClosestDistance(float3 separation, float3 relativeVelocity, float dt) {
+    float3 relativeTravel = relativeVelocity * dt;
+    float travelSq = dot(relativeTravel, relativeTravel);
+    if (travelSq < 1e-8) return length(separation);
+
+    float closestT = saturate(dot(separation, relativeTravel) / travelSq);
+    return length(separation - relativeTravel * closestT);
 }
 
 
