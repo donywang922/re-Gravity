@@ -9,6 +9,7 @@ using TMPro;
 public class CtrlPanel : UdonSharpBehaviour
 {
     public GravitySimulator simulator;
+    public LocalizationManager localizationManager;
 
 
     [Header("Console Configs")] public int defMaxBodies = 64;
@@ -54,18 +55,21 @@ public class CtrlPanel : UdonSharpBehaviour
     [Header("Settings Configs")] public float defGravConst = 0.5f;
     public float defDestroyRadius = 20000.0f;
     public float defSpawnRadius = 5000.0f;
+    public float defInitialSpeedMultiplier = 1.0f;
     public Vector2 defFragMass = new Vector2(5.0f, 15.0f);
     public Vector2 defInitMass = new Vector2(1000.0f, 10000.0f);
 
     [Header("Settings")] public TextSlider gravConstSlider;
     public TextSlider destroyRadiusSlider;
     public TextSlider spawnRadiusSlider;
+    public TextSlider initialSpeedMultiplierSlider;
     public TextDuoSlider fragMassSlider;
     public TextDuoSlider initMassSlider;
 
     [HideInInspector] public float activeGravConst;
     [HideInInspector] public float activeDestroyRadius;
     [HideInInspector] public float activeSpawnRadius;
+    [HideInInspector] public float activeInitialSpeedMultiplier;
     [HideInInspector] public Vector2 activeFragMass;
     [HideInInspector] public Vector2 activeInitMass;
 
@@ -74,6 +78,10 @@ public class CtrlPanel : UdonSharpBehaviour
 
     private int _idFlashBrightness, _idBodyBrightness, _idMinGlowMass;
     private int _idHslH, _idHslS, _idHslL, _idColor, _idSimScale;
+    private string _debugPhysicsStepLabel = "[debug.physics_step]";
+    private string _debugTargetCrtLabel = "[debug.target_crt]";
+    private string _debugCurrentBatchLabel = "[debug.current_batch]";
+    private string _debugTotalBatchesLabel = "[debug.total_batches]";
 
     public void InitCtrlPanel()
     {
@@ -99,6 +107,7 @@ public class CtrlPanel : UdonSharpBehaviour
         activeGravConst = defGravConst;
         activeDestroyRadius = defDestroyRadius;
         activeSpawnRadius = defSpawnRadius;
+        activeInitialSpeedMultiplier = defInitialSpeedMultiplier;
         activeFragMass = defFragMass;
         activeInitMass = defInitMass;
 
@@ -134,6 +143,7 @@ public class CtrlPanel : UdonSharpBehaviour
         gravConstSlider.SetValueAndRefresh(defGravConst);
         destroyRadiusSlider.SetValueAndRefresh(defDestroyRadius);
         spawnRadiusSlider.SetValueAndRefresh(defSpawnRadius);
+        initialSpeedMultiplierSlider.SetValueAndRefresh(defInitialSpeedMultiplier);
 
         fragMassSlider.SetValuesAndRefresh(defFragMass.x, fragMassSlider.sliderB.maxValue - defFragMass.y);
         initMassSlider.SetValuesAndRefresh(defInitMass.x, initMassSlider.sliderB.maxValue - defInitMass.y);
@@ -145,6 +155,7 @@ public class CtrlPanel : UdonSharpBehaviour
         VRCShader.SetGlobalTexture(_idColor, colorCRT);
         PushColors();
         ApplySettings();
+        RefreshLocalizedText();
     }
 
     public void OnMaxStepChanged()
@@ -208,6 +219,7 @@ public class CtrlPanel : UdonSharpBehaviour
         activeGravConst = gravConstSlider.slider.value;
         activeDestroyRadius = destroyRadiusSlider.slider.value;
         activeSpawnRadius = spawnRadiusSlider.slider.value;
+        activeInitialSpeedMultiplier = initialSpeedMultiplierSlider.slider.value;
 
         activeFragMass = new Vector2(fragMassSlider.sliderA.value,
             fragMassSlider.sliderB.maxValue - fragMassSlider.sliderB.value);
@@ -256,10 +268,22 @@ public class CtrlPanel : UdonSharpBehaviour
         simulator.isPaused = false;
     }
 
+    public void RefreshLocalizedText()
+    {
+        if (localizationManager == null) return;
+
+        _debugPhysicsStepLabel = localizationManager.GetText("debug.physics_step");
+        _debugTargetCrtLabel = localizationManager.GetText("debug.target_crt");
+        _debugCurrentBatchLabel = localizationManager.GetText("debug.current_batch");
+        _debugTotalBatchesLabel = localizationManager.GetText("debug.total_batches");
+    }
+
     void Update()
     {
+        if (debugInfoText == null || simulator == null) return;
+
         debugInfoText.text =
-            $"物理步长(ms): {simulator.GetPhysicsStep() * 1000:F2}    \t\t目标CRT: {simulator.GetCurrentCRT()}\n" +
-            $"当前批次: {simulator.GetCurrentBatch()}\t\t\t\t总批次数: {simulator.GetTotalBatches()}\n";
+            $"{_debugPhysicsStepLabel}: {simulator.GetPhysicsStep() * 1000:F2}    \t\t{_debugTargetCrtLabel}: {simulator.GetCurrentCRT()}\n" +
+            $"{_debugCurrentBatchLabel}: {simulator.GetCurrentBatch()}\t\t\t\t{_debugTotalBatchesLabel}: {simulator.GetTotalBatches()}\n";
     }
 }

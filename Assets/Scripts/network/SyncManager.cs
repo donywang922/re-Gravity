@@ -20,6 +20,17 @@ namespace network
         public GameObject loadingOverlay;
         public TextMeshProUGUI loadingText;
         public TextMeshProUGUI snapshotStatusText;
+        public LocalizationManager localizationManager;
+
+        // --- Localized UI state ---
+        private string _snapshotStatusKey = "status.no_snapshot";
+        private string _snapshotStatusSuffix = "";
+        private string _snapshotErrorKey = "";
+        private string _loadingStatusKey = "";
+        private string _loadingErrorKey = "";
+        private int _loadingProgressCurrent = -1;
+        private int _loadingProgressTotal = -1;
+        private float _loadingOverlayHideAt = -1f;
 
         // --- Player list UI ---
         private PlayerRow[] _playerRows = new PlayerRow[64];
@@ -61,6 +72,7 @@ namespace network
         private const int CHUNK_SIZE = 128;
         private const float SEND_TIMEOUT = 15f;
         private const float RECEIVE_TIMEOUT = 15f;
+        private const float LOADING_RESULT_DISPLAY_SECONDS = 2f;
         private const int MAX_RETRIES = 3;
 
         // ====================================================================
@@ -70,7 +82,82 @@ namespace network
         private void Start()
         {
             loadingOverlay.SetActive(false);
+            RefreshLocalizedText();
             UpdatePlayerList();
+        }
+
+        public void RefreshLocalizedText()
+        {
+            if (snapshotStatusText != null && !string.IsNullOrEmpty(_snapshotStatusKey))
+            {
+                string snapshotText = Localize(_snapshotStatusKey) + _snapshotStatusSuffix;
+                if (!string.IsNullOrEmpty(_snapshotErrorKey))
+                {
+                    snapshotText += ": " + Localize(_snapshotErrorKey);
+                }
+                snapshotStatusText.text = snapshotText;
+            }
+
+            if (loadingText != null && !string.IsNullOrEmpty(_loadingStatusKey))
+            {
+                string loadingStatus = Localize(_loadingStatusKey);
+                if (_loadingProgressCurrent >= 0 && _loadingProgressTotal >= 0)
+                {
+                    loadingStatus += " " + _loadingProgressCurrent + "/" + _loadingProgressTotal;
+                }
+                if (!string.IsNullOrEmpty(_loadingErrorKey))
+                {
+                    loadingStatus += ": " + Localize(_loadingErrorKey);
+                }
+                loadingText.text = loadingStatus;
+            }
+        }
+
+        private void SetSnapshotStatus(string statusKey, string suffix, string errorKey)
+        {
+            _snapshotStatusKey = statusKey;
+            _snapshotStatusSuffix = suffix;
+            _snapshotErrorKey = errorKey;
+            RefreshLocalizedText();
+        }
+
+        private void SetLoadingStatus(string statusKey)
+        {
+            _loadingStatusKey = statusKey;
+            _loadingErrorKey = "";
+            _loadingProgressCurrent = -1;
+            _loadingProgressTotal = -1;
+            _loadingOverlayHideAt = -1f;
+            RefreshLocalizedText();
+        }
+
+        private void SetLoadingProgress(int current, int total)
+        {
+            _loadingStatusKey = "status.downloading";
+            _loadingErrorKey = "";
+            _loadingProgressCurrent = current;
+            _loadingProgressTotal = total;
+            _loadingOverlayHideAt = -1f;
+            RefreshLocalizedText();
+        }
+
+        private void ShowLoadingResult(string statusKey, string errorKey)
+        {
+            _loadingStatusKey = statusKey;
+            _loadingErrorKey = errorKey;
+            _loadingProgressCurrent = -1;
+            _loadingProgressTotal = -1;
+            _loadingOverlayHideAt = Time.time + LOADING_RESULT_DISPLAY_SECONDS;
+
+            if (loadingOverlay != null) loadingOverlay.SetActive(true);
+            RefreshLocalizedText();
+            SendCustomEventDelayedSeconds(nameof(_HideLoadingOverlay), LOADING_RESULT_DISPLAY_SECONDS);
+        }
+
+        private string Localize(string key)
+        {
+            if (localizationManager != null) return localizationManager.GetText(key);
+            return "[" + key + "]";
         }
 
         public override void OnPlayerJoined(VRCPlayerApi player)
@@ -90,7 +177,7 @@ namespace network
             // 如果离开的玩家是我们的接收来源，取消接收
             if (player.playerId == _receivingFromId)
             {
-                CancelReceive("对方已离开");
+                CancelReceive("error.player_left");
             }
 
             // 从待发送队列中移除
@@ -122,7 +209,7 @@ namespace network
             // 接收超时检测
             if (_receivingFromId != -1 && Time.time - _lastReceiveTime > RECEIVE_TIMEOUT)
             {
-                CancelReceive("接收超时");
+                CancelReceive("error.receive_timeout");
             }
         }
 
@@ -306,7 +393,7 @@ namespace network
         {
             if (_isSending)
             {
-                snapshotStatusText.text = "发送中，无法抓取";
+                SetSnapshotStatus("status.sending_no_capture", "", "");
                 return;
             }
             simulator.StartSnapshot();
@@ -334,11 +421,12 @@ namespace network
 
             if (activeCount > 0)
             {
-                snapshotStatusText.text = $"抓取成功 ({System.DateTime.Now.ToString("HH:mm:ss")})";
+                SetSnapshotStatus("status.capture_success",
+                    " (" + System.DateTime.Now.ToString("HH:mm:ss") + ")", "");
             }
             else
             {
-                snapshotStatusText.text = "抓取失败";
+                SetSnapshotStatus("status.capture_failed", "", "");
             }
 
             UpdatePlayerList();
@@ -432,13 +520,13 @@ namespace network
                 int advertisedTotal = channel.totalSize;
                 if (advertisedTotal <= 0 || advertisedTotal > 65536)
                 {
-                    CancelReceive("快照大小无效");
+                    CancelReceive("error.snapshot_size_invalid");
                     return;
                 }
 
                 if (_receiveTotalSize != advertisedTotal)
                 {
-                    CancelReceive("快照元数据不一致");
+                    CancelReceive("error.snapshot_metadata_mismatch");
                     return;
                 }
 
@@ -455,7 +543,7 @@ namespace network
                     if (channel.chunkPosData == null || channel.chunkVelData == null ||
                         channel.chunkPosData.Length < count || channel.chunkVelData.Length < count)
                     {
-                        CancelReceive("快照分块无效");
+                        CancelReceive("error.snapshot_chunk_invalid");
                         return;
                     }
 
@@ -467,8 +555,7 @@ namespace network
 
                     // 更新进度 UI
                     int received = startIndex + count;
-                    if (loadingText != null)
-                        loadingText.text = $"下载中... {received}/{_receiveTotalSize}";
+                    SetLoadingProgress(received, _receiveTotalSize);
 
                     // 发送 ACK（仅序列化 PlayerState，~30 bytes）
                     PlayerState ps = GetLocalPlayerState();
@@ -513,10 +600,14 @@ namespace network
             // --- 自己下载自己的快照：跳过网络，直接本地应用 ---
             if (targetPlayerId == local.playerId)
             {
-                if (_localSnapshotSize <= 0) return;
+                if (_localSnapshotSize <= 0)
+                {
+                    ShowLoadingResult("status.sync_failed", "error.snapshot_size_invalid");
+                    return;
+                }
 
                 loadingOverlay.SetActive(true);
-                if (loadingText != null) loadingText.text = "正在应用本地快照...";
+                SetLoadingStatus("status.applying_local_snapshot");
 
                 ApplySnapshotSettings(_localSnapshotMaxBodies, _localSnapshotGravConst);
                 simulator.ApplyDownloadedSnapshot(_localSnapshotSize, _localPosBuffer, _localVelBuffer);
@@ -526,20 +617,28 @@ namespace network
 
             // --- 从其他玩家下载 ---
             PlayerState targetState = GetPlayerStateByPlayerId(targetPlayerId);
-            if (targetState == null || !targetState.hasSnapshot) return;
+            if (targetState == null || !targetState.hasSnapshot)
+            {
+                ShowLoadingResult("status.sync_failed", "");
+                return;
+            }
 
             if (targetState.snapshotSize <= 0 || targetState.snapshotSize > 65536)
             {
-                if (snapshotStatusText != null) snapshotStatusText.text = "快照大小无效";
+                ShowLoadingResult("status.sync_failed", "error.snapshot_size_invalid");
                 return;
             }
 
             PlayerState localState = GetLocalPlayerState();
-            if (localState == null) return;
+            if (localState == null)
+            {
+                ShowLoadingResult("status.sync_failed", "");
+                return;
+            }
 
             // 显示加载 UI
             loadingOverlay.SetActive(true);
-            if (loadingText != null) loadingText.text = "请求同步中...";
+            SetLoadingStatus("status.requesting_sync");
 
             // 设置接收状态
             _receivingFromId = targetPlayerId;
@@ -568,7 +667,7 @@ namespace network
                 ps.RequestSerialization();
             }
 
-            if (loadingText != null) loadingText.text = "正在应用数据...";
+            SetLoadingStatus("status.applying_data");
 
             // 应用快照配置
             TransferChannel senderChannel = GetTransferChannelByPlayerId(receivedFromId);
@@ -599,7 +698,7 @@ namespace network
             simulator.ctrlPanel.gravConstSlider.SetValueAndRefresh(gravConst);
         }
 
-        private void CancelReceive(string reason)
+        private void CancelReceive(string reasonKey)
         {
             _receivingFromId = -1;
 
@@ -611,8 +710,7 @@ namespace network
                 ps.RequestSerialization();
             }
 
-            if (loadingOverlay != null) loadingOverlay.SetActive(false);
-            if (snapshotStatusText != null) snapshotStatusText.text = $"同步失败: {reason}";
+            ShowLoadingResult("status.sync_failed", reasonKey);
         }
 
         // ====================================================================
@@ -781,12 +879,14 @@ namespace network
 
         public void OnApplySnapshotComplete()
         {
-            if (loadingText != null) loadingText.text = "下载完成";
-            SendCustomEventDelayedSeconds(nameof(_HideLoadingOverlay), 2.0f);
+            ShowLoadingResult("status.download_complete", "");
         }
 
         public void _HideLoadingOverlay()
         {
+            if (_loadingOverlayHideAt < 0f || Time.time + 0.01f < _loadingOverlayHideAt) return;
+
+            _loadingOverlayHideAt = -1f;
             if (loadingOverlay != null) loadingOverlay.SetActive(false);
         }
     }

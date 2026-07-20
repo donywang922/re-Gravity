@@ -123,12 +123,16 @@ Shader "re-Gravity/Render_BodyImpostor"
                     mass = currPosMass.w * interpolationRatio;
                 }
 
-                float simulationDistance = length(worldPos);
-
                 // --- 缩放处理 ---
                 float scale = _Udon_SimScale > 0.00001 ? _Udon_SimScale : 1.0;
                 worldPos *= scale;
                 worldPos.y += 1;
+
+                // 距离衰减以当前玩家视角为基准。衰减参数仍使用模拟单位，
+                // 因此先乘以渲染缩放值，再与世界空间中的相机距离比较。
+                float viewDistance = distance(worldPos, _WorldSpaceCameraPos.xyz);
+                float fadeStartDistance = _Udon_FadeStartDistance * scale;
+                float fadeEndDistance = _Udon_SpawnRadius * scale;
 
                 // --- Billboard 设置 ---
                 float radius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio) * scale;
@@ -154,8 +158,8 @@ Shader "re-Gravity/Render_BodyImpostor"
 
                 // --- 颜色采样与距离衰减 ---
                 float3 baseColor = tex2Dlod(_Udon_Color, float4(v.uv2, 0, 0)).rgb;
-                float fadeT = saturate((simulationDistance - _Udon_FadeStartDistance) /
-                    max(0.1, _Udon_SpawnRadius - _Udon_FadeStartDistance));
+                float fadeT = saturate((viewDistance - fadeStartDistance) /
+                    max(0.0001, fadeEndDistance - fadeStartDistance));
                 float fadeFactor = lerp(1.0, 0.5, fadeT);
 
                 float gray = dot(baseColor, float3(0.299, 0.587, 0.114));

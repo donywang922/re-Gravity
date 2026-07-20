@@ -18,6 +18,7 @@ public class PanelHandler : UdonSharpBehaviour
     // ── References ──────────────────────────────
     [Header("References")] public Transform panelRoot;
     public GameObject canvas;
+    public GameObject alternateCanvas;
     public Image panelImage;
 
     [Header("Sprites")] public Sprite pcSprite;
@@ -268,7 +269,8 @@ public class PanelHandler : UdonSharpBehaviour
     private void SetOpen(bool open)
     {
         _isOpen = open;
-        canvas.SetActive(open);
+        if (canvas != null) canvas.SetActive(open);
+        if (alternateCanvas != null) alternateCanvas.SetActive(false);
         
         if (open)
         {

@@ -1,1 +1,10 @@
-{}
+{
+  "reGravity.locale.v1": {
+    "LastUpdated": "2026-07-20T02:57:20.2737554-07:00",
+    "Key": "reGravity.locale.v1",
+    "Value": {
+      "type": "String",
+      "value": "zh-CN"
+    }
+  }
+}

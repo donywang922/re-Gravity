@@ -73,6 +73,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _idInnerRatio,
         _idDestroyRadius,
         _idSpawnRadius,
+        _idInitialSpeedMultiplier,
         _idFadeStartDistance;
 
     private int _idDeltaTime, _idSimSpeed, _idMaxStep, _idFrame, _idCycle;
@@ -98,6 +99,7 @@ public class GravitySimulator : UdonSharpBehaviour
         _idInnerRatio = VRCShader.PropertyToID("_Udon_InnerRatio");
         _idDestroyRadius = VRCShader.PropertyToID("_Udon_DestroyRadius");
         _idSpawnRadius = VRCShader.PropertyToID("_Udon_SpawnRadius");
+        _idInitialSpeedMultiplier = VRCShader.PropertyToID("_Udon_InitialSpeedMultiplier");
         _idFadeStartDistance = VRCShader.PropertyToID("_Udon_FadeStartDistance");
 
 
@@ -160,6 +162,7 @@ public class GravitySimulator : UdonSharpBehaviour
         VRCShader.SetGlobalFloat(_idGravitationalConstant, ctrlPanel.activeGravConst);
         VRCShader.SetGlobalFloat(_idDestroyRadius, ctrlPanel.activeDestroyRadius);
         VRCShader.SetGlobalFloat(_idSpawnRadius, ctrlPanel.activeSpawnRadius);
+        VRCShader.SetGlobalFloat(_idInitialSpeedMultiplier, ctrlPanel.activeInitialSpeedMultiplier);
         VRCShader.SetGlobalVector(_idFragmentSizeRange, ctrlPanel.activeFragMass);
         VRCShader.SetGlobalVector(_idInitialBodySizeRange, ctrlPanel.activeInitMass);
         VRCShader.SetGlobalFloat(_idRandomSeed, Random.value * 1000000f);

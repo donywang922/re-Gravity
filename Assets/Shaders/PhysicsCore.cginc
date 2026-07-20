@@ -86,6 +86,7 @@ uniform float _Udon_Cycle;
 
 // 物理参数
 uniform float _Udon_GravitationalConstant;
+uniform float _Udon_InitialSpeedMultiplier;
 uniform float _Udon_InnerDensity;   // 内层密度（默认花岗岩 2.7）
 uniform float _Udon_OuterDensity;   // 外层密度（默认水 1.0）
 uniform float _Udon_InnerRatio;     // 内外层半径比（默认 0.5）

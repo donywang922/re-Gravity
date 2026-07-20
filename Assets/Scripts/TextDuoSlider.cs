@@ -32,6 +32,9 @@ namespace Scenes.main_UdonProgramSources
         public bool useSpecialValueB = false;
         public float specialValueB = 0f;
         public string specialValueTextB = "";
+
+        private string _localizedSpecialValueTextA = "";
+        private string _localizedSpecialValueTextB = "";
         
         public UdonSharpBehaviour callbackTarget;
         public string callbackEvent;
@@ -51,23 +54,7 @@ namespace Scenes.main_UdonProgramSources
                 sliderA.value = sliderB.maxValue - sliderB.value;
             }
 
-            float currentValue = sliderA.value;
-            string displayText = "";
-            if (useSpecialValueA && Mathf.Abs(currentValue - specialValueA) < 0.001f && !string.IsNullOrEmpty(specialValueTextA))
-            {
-                displayText = specialValueTextA;
-            }
-            else
-            {
-                switch (decimalPlacesA)
-                {
-                    case 0: displayText = currentValue.ToString("F0"); break;
-                    case 1: displayText = currentValue.ToString("F1"); break;
-                    case 2: displayText = currentValue.ToString("F2"); break;
-                    default: displayText = currentValue.ToString("F1"); break;
-                }
-            }
-            textA.text = $"←{displayText}";
+            RefreshTextA();
             if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
             {
                 callbackTarget.SendCustomEvent(callbackEvent);
@@ -81,11 +68,58 @@ namespace Scenes.main_UdonProgramSources
                 sliderB.value = sliderB.maxValue - sliderA.value;
             }
 
+            RefreshTextB();
+            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
+            {
+                callbackTarget.SendCustomEvent(callbackEvent);
+            }
+        }
+
+        public void SetSpecialValueTexts(string valueA, string valueB)
+        {
+            _localizedSpecialValueTextA = valueA;
+            _localizedSpecialValueTextB = valueB;
+            RefreshTextA();
+            RefreshTextB();
+        }
+
+        private void RefreshTextA()
+        {
+            float currentValue = sliderA.value;
+            string displayText = "";
+            string activeSpecialValueTextA = string.IsNullOrEmpty(_localizedSpecialValueTextA)
+                ? specialValueTextA
+                : _localizedSpecialValueTextA;
+
+            if (useSpecialValueA && Mathf.Abs(currentValue - specialValueA) < 0.001f && !string.IsNullOrEmpty(activeSpecialValueTextA))
+            {
+                displayText = activeSpecialValueTextA;
+            }
+            else
+            {
+                switch (decimalPlacesA)
+                {
+                    case 0: displayText = currentValue.ToString("F0"); break;
+                    case 1: displayText = currentValue.ToString("F1"); break;
+                    case 2: displayText = currentValue.ToString("F2"); break;
+                    default: displayText = currentValue.ToString("F1"); break;
+                }
+            }
+
+            textA.text = $"←{displayText}";
+        }
+
+        private void RefreshTextB()
+        {
             float currentValue = sliderB.maxValue - sliderB.value;
             string displayText = "";
-            if (useSpecialValueB && Mathf.Abs(currentValue - specialValueB) < 0.001f && !string.IsNullOrEmpty(specialValueTextB))
+            string activeSpecialValueTextB = string.IsNullOrEmpty(_localizedSpecialValueTextB)
+                ? specialValueTextB
+                : _localizedSpecialValueTextB;
+
+            if (useSpecialValueB && Mathf.Abs(currentValue - specialValueB) < 0.001f && !string.IsNullOrEmpty(activeSpecialValueTextB))
             {
-                displayText = specialValueTextB;
+                displayText = activeSpecialValueTextB;
             }
             else
             {
@@ -97,11 +131,8 @@ namespace Scenes.main_UdonProgramSources
                     default: displayText = currentValue.ToString("F1"); break;
                 }
             }
+
             textB.text = $"{displayText}→";
-            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
-            {
-                callbackTarget.SendCustomEvent(callbackEvent);
-            }
         }
 
         public void _OnButtonAP()

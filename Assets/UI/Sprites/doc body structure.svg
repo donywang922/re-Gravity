@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300">
+  <defs>
+    <linearGradient id="panel" x1="0" x2="1">
+      <stop offset="0" stop-color="#071321"/>
+      <stop offset="1" stop-color="#10192a"/>
+    </linearGradient>
+    <radialGradient id="envelope">
+      <stop offset="0" stop-color="#ffb454"/>
+      <stop offset="0.44" stop-color="#ff9f43"/>
+      <stop offset="0.46" stop-color="#4fd8ff" stop-opacity="0.86"/>
+      <stop offset="1" stop-color="#1b6993" stop-opacity="0.32"/>
+    </radialGradient>
+    <radialGradient id="smallBody">
+      <stop offset="0" stop-color="#fff2b7"/>
+      <stop offset="0.48" stop-color="#ffad4d"/>
+      <stop offset="0.5" stop-color="#55dcff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#17658e" stop-opacity="0.35"/>
+    </radialGradient>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#dcecff"/>
+    </marker>
+  </defs>
+  <rect x="2" y="2" width="1196" height="296" rx="22" fill="url(#panel)" stroke="#31506d" stroke-width="4"/>
+
+  <text x="178" y="42" text-anchor="middle" fill="#a9c4d8" font-family="DejaVu Sans, sans-serif" font-size="19">R / Rcore</text>
+  <circle cx="178" cy="155" r="98" fill="url(#envelope)" stroke="#65dcff" stroke-width="4"/>
+  <circle cx="178" cy="155" r="48" fill="#ffac4f" stroke="#ffe0a3" stroke-width="3"/>
+  <line x1="178" y1="155" x2="274" y2="155" stroke="#7ee4ff" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="178" y1="155" x2="224" y2="155" stroke="#fff0bd" stroke-width="3" marker-end="url(#arrow)"/>
+  <circle cx="111" cy="89" r="18" fill="#55dcff"/>
+  <text x="111" y="96" text-anchor="middle" fill="#071321" font-family="DejaVu Sans, sans-serif" font-size="21" font-weight="bold">1</text>
+  <circle cx="149" cy="145" r="18" fill="#ffca77"/>
+  <text x="149" y="152" text-anchor="middle" fill="#071321" font-family="DejaVu Sans, sans-serif" font-size="21" font-weight="bold">2</text>
+
+  <line x1="324" y1="34" x2="324" y2="266" stroke="#31506d" stroke-width="2"/>
+  <text x="476" y="54" text-anchor="middle" fill="#8ea8bc" font-family="DejaVu Sans, sans-serif" font-size="20">OUTER CONTACT</text>
+  <circle cx="435" cy="147" r="63" fill="url(#envelope)" stroke="#65dcff" stroke-width="3"/>
+  <circle cx="520" cy="147" r="47" fill="url(#smallBody)" stroke="#65dcff" stroke-width="3"/>
+  <path d="M481 100 Q505 147 481 194" fill="#f8ffff" fill-opacity="0.17" stroke="#dff8ff" stroke-width="3" stroke-dasharray="7 6"/>
+  <text x="476" y="238" text-anchor="middle" fill="#76ddff" font-family="DejaVu Sans, sans-serif" font-size="23">drag · transfer · shatter</text>
+
+  <line x1="626" y1="34" x2="626" y2="266" stroke="#31506d" stroke-width="2"/>
+  <text x="761" y="54" text-anchor="middle" fill="#8ea8bc" font-family="DejaVu Sans, sans-serif" font-size="20">CORE CONTACT</text>
+  <circle cx="724" cy="147" r="66" fill="url(#envelope)" stroke="#65dcff" stroke-width="3"/>
+  <circle cx="802" cy="147" r="48" fill="url(#smallBody)" stroke="#65dcff" stroke-width="3"/>
+  <circle cx="751" cy="147" r="27" fill="#fff0bd" fill-opacity="0.58"/>
+  <path d="M838 147 L871 147" stroke="#dcecff" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="761" y="238" text-anchor="middle" fill="#ffbd69" font-family="DejaVu Sans, sans-serif" font-size="25">merge + momentum</text>
+
+  <line x1="900" y1="34" x2="900" y2="266" stroke="#31506d" stroke-width="2"/>
+  <text x="1050" y="54" text-anchor="middle" fill="#8ea8bc" font-family="DejaVu Sans, sans-serif" font-size="20">TIDAL STRESS</text>
+  <circle cx="990" cy="147" r="56" fill="url(#envelope)" stroke="#65dcff" stroke-width="3"/>
+  <ellipse cx="1110" cy="147" rx="58" ry="31" fill="url(#smallBody)" stroke="#65dcff" stroke-width="3"/>
+  <path d="M1041 124 C1068 116 1071 108 1095 101" fill="none" stroke="#76ddff" stroke-width="5" stroke-linecap="round"/>
+  <path d="M1041 170 C1068 178 1071 187 1095 193" fill="none" stroke="#76ddff" stroke-width="5" stroke-linecap="round"/>
+  <text x="1050" y="238" text-anchor="middle" fill="#b89cff" font-family="DejaVu Sans, sans-serif" font-size="25">tidal &gt; self-gravity</text>
+</svg>

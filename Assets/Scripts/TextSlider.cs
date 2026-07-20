@@ -21,6 +21,8 @@ namespace Scenes.main_UdonProgramSources
 
         public string specialValueText = "";
 
+        private string _localizedSpecialValueText = "";
+
         public UdonSharpBehaviour callbackTarget;
         public string callbackEvent;
 
@@ -32,13 +34,33 @@ namespace Scenes.main_UdonProgramSources
 
         public void _OnSliderChanged()
         {
+            RefreshDisplay();
+
+            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
+            {
+                callbackTarget.SendCustomEvent(callbackEvent);
+            }
+        }
+
+        public void SetSpecialValueText(string value)
+        {
+            _localizedSpecialValueText = value;
+            RefreshDisplay();
+        }
+
+        private void RefreshDisplay()
+        {
             float currentValue = slider.value * displayMultiplier;
             string displayText = "";
 
+            string activeSpecialValueText = string.IsNullOrEmpty(_localizedSpecialValueText)
+                ? specialValueText
+                : _localizedSpecialValueText;
+
             if (useSpecialValue && Mathf.Abs(currentValue - specialValue) < 0.001f &&
-                !string.IsNullOrEmpty(specialValueText))
+                !string.IsNullOrEmpty(activeSpecialValueText))
             {
-                displayText = specialValueText;
+                displayText = activeSpecialValueText;
             }
             else
             {
@@ -52,11 +74,6 @@ namespace Scenes.main_UdonProgramSources
             }
 
             text.text = displayText;
-
-            if (callbackTarget != null && !string.IsNullOrEmpty(callbackEvent))
-            {
-                callbackTarget.SendCustomEvent(callbackEvent);
-            }
         }
 
         public void _OnButtonP()
