@@ -131,8 +131,8 @@ Shader "re-Gravity/Render_BodyImpostor"
                 // 距离衰减以当前玩家视角为基准。衰减参数仍使用模拟单位，
                 // 因此先乘以渲染缩放值，再与世界空间中的相机距离比较。
                 float viewDistance = distance(worldPos, _WorldSpaceCameraPos.xyz);
-                float fadeStartDistance = _Udon_FadeStartDistance * scale;
-                float fadeEndDistance = _Udon_SpawnRadius * scale;
+                float fadeStartDistance = _Udon_FadeStartDistance;
+                float fadeEndDistance = _Udon_SpawnRadius;
 
                 // --- Billboard 设置 ---
                 float radius = GetRadius(mass, _Udon_InnerDensity, _Udon_OuterDensity, _Udon_InnerRatio) * scale;
